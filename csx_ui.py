@@ -231,7 +231,8 @@ async function loadFolders(){
   const d = await (await fetch("/api/folders")).json();
   const sel = $("#folder");
   sel.innerHTML = `<option value="">All folders (${d.total} sessions)</option>` +
-    d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.deep}</option>`).join("");
+    d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.own} here` +
+      (f.deep > f.own ? ` (+${f.deep - f.own} in subfolders)` : ``) + `</option>`).join("");
 }
 loadFolders();
 $("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, mode==="title"?120:450); };
@@ -344,7 +345,8 @@ def build(csx):
                        "short": ("~" + c[len(home):]) if c.startswith(home) else c,
                        "own": own, "deep": deep}
                       for c, own, deep in csx.folders(idx)]
-                return self._send(json.dumps({"folders": fl, "total": len(idx)}),
+                total = sum(f["own"] for f in fl)
+                return self._send(json.dumps({"folders": fl, "total": total}),
                                   "application/json")
 
             if u.path == "/api/session":

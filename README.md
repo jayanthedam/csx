@@ -110,9 +110,36 @@ nothing, so nothing short-circuits) is ~2.2s.
 A thread pool made this **slower** (10.6s), not faster: it's CPU-bound regex under
 the GIL, not I/O. Left single-threaded on purpose.
 
+**Folder counts.** `--folders` prints two numbers: sessions that ran *in* that
+folder, and how many more live *below* it. A parent's subtree count deliberately
+includes its children — `~/ABL` covers `~/ABL/abl-platform` — so the two columns
+are shown separately and every session is counted exactly once in the "here"
+column. Three things that quietly go wrong here and are covered by `tests.py`:
+
+- **Sibling prefixes.** `~/ABL/abl-platform` must not swallow `-deploy`, `-infra`,
+  `-2268` or `_worktrees`, all of which exist in this tree. The prefix check is
+  anchored on a path separator, not a bare `startswith`.
+- **One session, several files.** A resumed Codex session writes multiple rollout
+  files; counts key on distinct session id so it isn't tallied twice.
+- **Sessions with no recorded cwd.** 9 of mine have none. They'd silently vanish
+  from every folder filter, so they get their own `(no folder recorded)` bucket
+  that you can scope to like any other folder.
+
+`-p` is different and deliberately loose: `-p abl-platform` is a substring match,
+so it *does* also hit `abl-platform-deploy`. Use `-i` when you mean one folder.
+
 **Codex quirk.** A resumed Codex session writes several `rollout-*.jsonl` files
 under one session id. `show` and `resume` collapse them to the newest segment;
 the listing still shows each segment on its own date.
+
+## Tests
+
+```bash
+python3 tests.py     # 19 assertions, no deps; also cross-checks the live index
+```
+
+The live-index check asserts that, for every folder, the counts shown by
+`--folders` equal what `-i` and `-i --only` actually return.
 
 ## Ideas / not done yet
 

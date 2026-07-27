@@ -353,7 +353,13 @@ def cmd_deep(idx, terms, limit, ctx, meta, per=4):
 
 
 def in_tree(cwd, root, subtree=True):
-    """Does a session's cwd sit at (or under) root?"""
+    """Does a session's cwd sit at (or under) root?
+
+    Uses a separator-anchored prefix so ~/ABL/abl-platform does NOT swallow
+    ~/ABL/abl-platform-deploy, -infra, or _worktrees.
+    """
+    if root == NO_CWD:
+        return not cwd
     if not cwd:
         return False
     cwd = os.path.normpath(cwd)
@@ -361,18 +367,29 @@ def in_tree(cwd, root, subtree=True):
     return cwd == root or (subtree and cwd.startswith(root + os.sep))
 
 
+NO_CWD = "(no folder recorded)"
+
+
 def folders(idx):
-    """[(cwd, own_count, subtree_count)] sorted by subtree count desc."""
-    own = {}
+    """[(cwd, own, subtree)] by DISTINCT session id — a Codex session split across
+    several rollout files must not count more than once."""
+    seen = {}
     for e in idx:
-        c = e.get("cwd")
-        if c:
-            own[os.path.normpath(c)] = own.get(os.path.normpath(c), 0) + 1
+        key = (e["id"], e.get("kind"))
+        c = os.path.normpath(e["cwd"]) if e.get("cwd") else NO_CWD
+        seen.setdefault(key, c)
+    own = {}
+    for c in seen.values():
+        own[c] = own.get(c, 0) + 1
     out = []
     for root, n in own.items():
-        deep = sum(v for c, v in own.items() if c == root or c.startswith(root + os.sep))
+        if root == NO_CWD:
+            out.append((root, n, n))
+            continue
+        deep = sum(v for c, v in own.items()
+                   if c != NO_CWD and (c == root or c.startswith(root + os.sep)))
         out.append((root, n, deep))
-    return sorted(out, key=lambda r: (-r[2], r[0]))
+    return sorted(out, key=lambda r: (r[0] == NO_CWD, -r[2], r[0]))
 
 
 def pick(idx, ident):
@@ -520,10 +537,15 @@ def main():
         if root:
             rows = [r for r in rows if in_tree(r[0], root, not a.only) or r[0] == os.path.normpath(
                 os.path.expanduser(root))]
+        emit(f"{C['dim']}{'here':>6} {'+sub':>6}  folder{C['r']}")
         for cwd, own, deep in rows:
-            extra = f"{C['dim']} (+{deep - own} in subfolders){C['r']}" if deep > own else ""
-            emit(f"{C['c']}{own:>5}{C['r']} {cwd}{extra}")
-        emit(f"{C['dim']}{len(rows)} folder(s) · scope one with `csx -i <path>`{C['r']}")
+            sub = f"{C['dim']}{deep - own:>6}{C['r']}" if deep > own else f"{C['dim']}{'-':>6}{C['r']}"
+            emit(f"{C['c']}{own:>6}{C['r']} {sub}  {cwd}")
+        total = sum(o for _, o, _ in rows)
+        emit(f"{C['dim']}{len(rows)} folder(s), {total} session(s) — each counted once, "
+             f"under the folder it actually ran in.{C['r']}")
+        emit(f"{C['dim']}`csx -i <path>` includes subfolders; add --only for just that "
+             f"folder.{C['r']}")
         return flush()
 
     limit = 10 ** 6 if (a.all or a.limit is None) else a.limit
