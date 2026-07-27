@@ -406,6 +406,7 @@ SCOPE = [""]
 
 
 def row(e, w=100):
+    live = e["id"] in live_ids()
     when = dt.datetime.fromtimestamp(e["mtime"]).strftime("%m-%d %I:%M%p").lower()
     t = e["title"] or f"{C['dim']}(no text){C['r']}"
     ident = e["id"] if FULL_IDS[0] else e["id"][:8]
@@ -415,7 +416,8 @@ def row(e, w=100):
         tag = f"{C['y']}codex   {C['r']}"
     else:
         tag = f"{C['c']}claude  {C['r']}"
-    return (f"{tag} {C['c']}{ident}{C['r']} {C['dim']}{when} {ago(e['mtime']):>4}"
+    return (f"{C['g']}{'·' if live else ' '}{C['r']}{tag} {C['c']}{ident}{C['r']} "
+            f"{C['dim']}{when} {ago(e['mtime']):>4}"
             f" {e['turns']:>4} msgs{C['r']} {C['m']}{proj(e)[:18]:<18}{C['r']} {t[:w]}")
 
 
@@ -625,6 +627,50 @@ def prompt_log(terms, limit=200):
     return out
 
 
+LIVE_DIR = os.path.expanduser("~/.claude/sessions")
+_LIVE = [0.0, set()]
+
+
+def live_ids(ttl=3.0):
+    """Session ids that are running right now.
+
+    Claude Code registers each live session as ~/.claude/sessions/<pid>.json;
+    a stale file just means the pid is gone. Resumed Codex/Claude sessions also
+    carry the id on their command line, so scan those too.
+    """
+    now = dt.datetime.now().timestamp()
+    if now - _LIVE[0] < ttl:
+        return _LIVE[1]
+    ids = set()
+    try:
+        for fn in os.listdir(LIVE_DIR):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                d = json.load(open(os.path.join(LIVE_DIR, fn)))
+                if d.get("sessionId") and os.path.exists(f"/proc/{d.get('pid')}"):
+                    ids.add(d["sessionId"])
+            except Exception:
+                pass
+    except OSError:
+        pass
+    uuid_re = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+    try:
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                cmd = open(f"/proc/{pid}/cmdline", "rb").read().decode("utf-8", "ignore")
+            except OSError:
+                continue
+            if "resume" in cmd:
+                ids.update(uuid_re.findall(cmd))
+    except OSError:
+        pass
+    _LIVE[0], _LIVE[1] = now, ids
+    return ids
+
+
 def day_of(e):
     """The date a session was last active, as YYYY-MM-DD local."""
     return dt.datetime.fromtimestamp(e["mtime"]).strftime("%Y-%m-%d")
@@ -717,6 +763,7 @@ def main():
     ap.add_argument("-m", "--meta", action="store_true", help="include tool calls")
     ap.add_argument("-s", "--subagents", action="store_true", help="include subagent runs")
     ap.add_argument("-b", "--branch", help="only sessions on this git branch")
+    ap.add_argument("--live", action="store_true", help="only sessions running right now")
     ap.add_argument("--empty", action="store_true",
                     help="include sessions with no messages (hidden by default)")
     ap.add_argument("--codex", action="store_true", help="only Codex sessions")
@@ -769,6 +816,9 @@ def main():
     idx = load(a.rescan)
     if not a.empty:
         idx = [e for e in idx if e.get("turns")]
+    if a.live:
+        ids = live_ids()
+        idx = [e for e in idx if e["id"] in ids]
     if a.branch:
         idx = [e for e in idx if a.branch.lower() in (e.get("branch") or "").lower()]
     if not (a.subagents or a.glob):

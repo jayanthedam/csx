@@ -292,7 +292,8 @@ class Tui:
             when = (self.csx.dt.datetime.fromtimestamp(e["mtime"])
                     .strftime("%b %d %I:%M%p").replace(" 0", " ").lower()
                     if e.get("mtime") else "")
-            left = (f"{'▸' if on else ' '} {tag:<7} {when:<15} {e['turns']:>4} "
+            live = "·" if e["id"] in self.csx.live_ids() else " "
+            left = (f"{'▸' if on else ' '}{live}{tag:<7} {when:<15} {e['turns']:>4} "
                     f"{self.csx.proj(e)[:16]:<16} {(e.get('branch') or '')[:12]:<12} ")
             row = (left + e["title"])[:w - 1]
             scr.addnstr(y, 0, row.ljust(w - 1), w - 1,

@@ -37,7 +37,7 @@ button.on{border-color:var(--acc);color:var(--acc)}
 select{max-width:170px}
 .hint{color:var(--dim);font-size:12px;padding-top:6px}
 main{padding:6px 0 40px}
-.row{display:grid;grid-template-columns:72px 88px 122px 60px 132px 110px 1fr 132px;gap:9px;align-items:baseline;
+.row{display:grid;grid-template-columns:10px 72px 88px 122px 60px 132px 110px 1fr 132px;gap:9px;align-items:baseline;
   padding:6px 14px;border-bottom:1px solid var(--line);cursor:pointer}
 .row:hover{background:var(--card)}
 .tag{font-size:10.5px;font-weight:700;letter-spacing:.03em;text-align:center;border-radius:999px;
@@ -51,13 +51,16 @@ main{padding:6px 0 40px}
 .act button{padding:1px 7px;font-size:11px;border-radius:5px;line-height:1.5}
 .row.sel{background:var(--card);box-shadow:inset 3px 0 0 var(--acc)}
 .gone{color:var(--sa);font-style:italic}
+.live{color:#3f9d5a;opacity:.85}          /* running now — a dot, deliberately quiet */
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .live{color:#4ade80;opacity:.7}}
+:root[data-theme="dark"] .live{color:#4ade80;opacity:.7}
 #day{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--dim);font-size:12.5px;display:none}
 #day.on{display:block}
 #day b{color:var(--fg)}
 .proj{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .branch{color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hits{padding:2px 14px 8px 184px;color:var(--dim);font-size:12px}
+.hits{padding:2px 14px 8px 194px;color:var(--dim);font-size:12px}
 .hits b{color:var(--fg);opacity:.65;font-weight:600}
 .empty{padding:40px 14px;color:var(--dim);text-align:center}
 .hits div{padding:1px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -192,6 +195,7 @@ async function load(){
   $("#list").innerHTML = d.rows.map(e => `
     <div class="row" data-id="${e.id}" data-cmd="${esc(e.cmd)}"
          title="Click to copy:  ${esc(e.cmd)}">
+      <span class="live">${e.live ? "·" : ""}</span>
       <span class="tag ${e.tag}">${e.label}</span>
       <span class="id" data-copy="${e.id}" title="Click to copy the session id">${e.id.slice(0,8)}</span>
       <span class="when" title="${e.full_when}">${e.when}</span>
@@ -480,6 +484,7 @@ def build(csx):
                 if len(sel) >= hitcap:
                     break
 
+        live = csx.live_ids()
         for e in sel[:limit]:
             when = csx.dt.datetime.fromtimestamp(e["mtime"])
             tag = "subagent" if e.get("kind") == "sub" else (
@@ -498,6 +503,7 @@ def build(csx):
                 "title": e["title"],
                 "cmd": csx.resume_cmd(e),
                 "forkable": e.get("src") != "codex",
+                "live": e["id"] in live,
                 "hits": e.get("_hits", []),
             })
         return out, len(sel)

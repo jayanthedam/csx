@@ -45,6 +45,7 @@ Read-only. It never writes to either tool's directory — its own index lives at
 | `-s` | include subagent runs in the listing |
 | `-b BRANCH` | only sessions on that git branch |
 | `--empty` | include sessions with no messages (hidden by default) |
+| `--live` | only sessions running right now |
 | `--claude` / `--codex` | restrict to one tool |
 | `-p NAME` | substring match on project name or cwd |
 | `-i PATH` | only sessions run in PATH **itself** (`-i ~/ABL`) |
@@ -161,6 +162,17 @@ Not taken: AI-generated summaries (Claude Code's own `ai-title` already fills
 that role, free) and semantic search (needs a local embedding model and an
 embedding store — a real dependency, and lexical + the prompt log has found
 everything so far).
+
+**Live sessions.** A quiet `·` marks sessions running right now (muted green in
+the browser, plain in the terminal) — deliberately a dot, not a badge, since on
+a normal day five of ~400 rows are live and the list should stay calm.
+`csx --live` lists only those.
+
+Detection is two-sided: Claude Code registers each live session as
+`~/.claude/sessions/<pid>.json` (a stale file just means the pid is gone, so the
+pid is checked against `/proc`), and any resumed session — Claude or Codex —
+carries its id on the process command line, so `/proc/*/cmdline` is scanned too.
+Cached for 3s so redraws stay cheap.
 
 ## Design notes
 
