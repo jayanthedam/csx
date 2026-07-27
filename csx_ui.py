@@ -57,14 +57,36 @@ mark{background:var(--hl);color:inherit}
 #toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--fg);color:var(--bg);
   padding:8px 14px;border-radius:6px;opacity:0;transition:.15s;pointer-events:none;font-size:12px}
 #toast.show{opacity:1}
-#panel{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column}
+#panel{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;z-index:50}
 #panel.open{display:flex}
-#phead{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-#pbody{overflow:auto;padding:12px 14px}
+#phead{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;
+  align-items:center;flex-wrap:wrap;flex:0 0 auto;background:var(--bg)}
+#pbody{overflow:auto;padding:14px;flex:1 1 auto}
+#pbody>*:first-child{margin-top:0}
 .turn{border-left:2px solid var(--line);padding:2px 0 10px 10px;margin-bottom:10px}
 .turn b{font-size:11px;letter-spacing:.04em}
 .turn.user{border-color:var(--acc)}
 .turn pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-word;font:inherit}
+.md{margin-top:4px;font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:13.5px;
+  line-height:1.62;max-width:none}
+.md h1,.md h2,.md h3,.md h4{margin:14px 0 6px;line-height:1.3}
+.md h1{font-size:1.35em}.md h2{font-size:1.2em}.md h3{font-size:1.08em}.md h4{font-size:1em}
+.md p{margin:8px 0}
+.md ul,.md ol{margin:8px 0;padding-left:22px}
+.md li{margin:3px 0}
+.md code{font-family:ui-monospace,Menlo,monospace;font-size:.9em;background:var(--card);
+  border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.md pre.code{background:var(--card);border:1px solid var(--line);border-radius:6px;
+  padding:10px 12px;overflow-x:auto;margin:10px 0}
+.md pre.code code{background:none;border:0;padding:0;font-size:12.5px}
+.md blockquote{margin:8px 0;padding:2px 0 2px 12px;border-left:3px solid var(--line);color:var(--dim)}
+.md table{border-collapse:collapse;margin:10px 0;display:block;overflow-x:auto}
+.md th,.md td{border:1px solid var(--line);padding:4px 9px;text-align:left}
+.md th{background:var(--card)}
+.md hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+.md a{color:var(--acc)}
+.md p:first-child code:only-child{color:var(--dim)}
+.turn.tool{opacity:.62}
 .cmd{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 8px;cursor:copy}
 .cmd:hover{border-color:var(--acc)}
 </style>
@@ -187,24 +209,102 @@ $("#list").addEventListener("dblclick", e => {
   if (row) open_session(row.dataset.id);
 });
 
+// Small markdown renderer — enough for transcripts, no library.
+function md(src){
+  const code = [];
+  let t = esc(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (m, lang, body) => {
+    code.push(`<pre class="code"><code>${body.replace(/\n$/,"")}</code></pre>`);
+    return `\u0000${code.length - 1}\u0000`;
+  });
+
+  const lines = t.split("\n"), out = [];
+  let list = null, para = [], quote = [];
+  const flushPara = () => { if (para.length){ out.push(`<p>${para.join("<br>")}</p>`); para = []; } };
+  const flushList = () => { if (list){ out.push(`</${list}>`); list = null; } };
+  const flushQuote = () => { if (quote.length){ out.push(`<blockquote>${quote.join("<br>")}</blockquote>`); quote = []; } };
+  const flushAll = () => { flushPara(); flushList(); flushQuote(); };
+
+  for (const raw of lines){
+    const line = raw.replace(/\s+$/,"");
+    let m;
+    if (!line.trim()){ flushAll(); continue; }
+    if (/^\u0000\d+\u0000$/.test(line.trim())){ flushAll(); out.push(line.trim()); continue; }
+    if ((m = line.match(/^(#{1,6})\s+(.*)$/))){
+      flushAll(); out.push(`<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`); continue;
+    }
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())){ flushAll(); out.push("<hr>"); continue; }
+    if ((m = line.match(/^&gt;\s?(.*)$/))){ flushPara(); flushList(); quote.push(inline(m[1])); continue; }
+    if (/^\s*\|.*\|\s*$/.test(line)){ flushAll(); out.push(row2cells(line)); continue; }
+    if ((m = line.match(/^\s*[-*+]\s+(.*)$/))){
+      flushPara(); flushQuote();
+      if (list !== "ul"){ flushList(); out.push("<ul>"); list = "ul"; }
+      out.push(`<li>${inline(m[1])}</li>`); continue;
+    }
+    if ((m = line.match(/^\s*\d+[.)]\s+(.*)$/))){
+      flushPara(); flushQuote();
+      if (list !== "ol"){ flushList(); out.push("<ol>"); list = "ol"; }
+      out.push(`<li>${inline(m[1])}</li>`); continue;
+    }
+    flushList(); flushQuote(); para.push(inline(line));
+  }
+  flushAll();
+
+  let html = out.join("\n")
+    .replace(/(<tr>[\s\S]*?<\/tr>\n?)+/g, m => `<table>${m.replace(/\n/g,"")}</table>`)
+    .replace(/\u0000(\d+)\u0000/g, (m, i) => code[+i]);
+  return html;
+}
+function row2cells(line){
+  const cells = line.trim().replace(/^\||\|$/g, "").split("|");
+  if (cells.every(c => /^\s*:?-{2,}:?\s*$/.test(c))) return "";   // separator row
+  const tag = /\*\*/.test(line) ? "td" : "td";
+  return "<tr>" + cells.map(c => `<${tag}>${inline(c.trim())}</${tag}>`).join("") + "</tr>";
+}
+function inline(s){
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+let rawMode = false, showTools = false, current = null, currentId = null;
+
 async function open_session(id){
-  const r = await fetch("/api/session?id="+encodeURIComponent(id));
+  currentId = id;
+  const r = await fetch("/api/session?id=" + encodeURIComponent(id) +
+                        (showTools ? "&tools=1" : ""));
   const d = await r.json();
+  current = d;
   const agent = d.src === "codex" ? "Codex" : "Claude";
-  $("#phead").innerHTML = `<button id="close">← Back to list</button>
+  $("#phead").innerHTML = `<button id="close">← Back to list  (Esc)</button>
     <b>${esc(d.label)}</b>
     <span class="when">${esc(d.cwd)} · ${d.turns} messages · ${d.start} → ${d.end}</span>
-    <span class="cmd" id="pcmd" title="Click to copy">${esc(d.cmd)} ⧉</span>`;
-  $("#pbody").innerHTML = d.turns_list.map(t =>
-    `<div class="turn ${t[0]}"><b>${t[0]==="user"?"You":agent} · ${t[1]}</b>` +
-    `<pre>${esc(t[2])}</pre></div>`).join("");
+    <span class="cmd" id="pcmd" title="Click to copy">${esc(d.cmd)} ⧉</span>
+    <button id="praw">${rawMode ? "Rendered" : "Raw text"}</button>
+    <button id="ptools" class="${showTools ? "on" : ""}">Tool calls</button>`;
+  paint();
   $("#panel").classList.add("open");
   $("#pbody").scrollTop = 0;
-  $("#close").onclick = () => $("#panel").classList.remove("open");
+  $("#close").onclick = closePanel;
   $("#pcmd").onclick = () => copy(d.cmd, "resume command");
+  $("#praw").onclick = () => { rawMode = !rawMode;
+    $("#praw").textContent = rawMode ? "Rendered" : "Raw text"; paint(); };
+  $("#ptools").onclick = () => { showTools = !showTools; open_session(currentId); };
+}
+
+function paint(){
+  const d = current, agent = d.src === "codex" ? "Codex" : "Claude";
+  $("#pbody").innerHTML = d.turns_list.map(t =>
+    `<div class="turn ${t[0]}"><b>${t[0]==="user"?"You":agent} · ${t[1]}</b>` +
+    (rawMode ? `<pre>${esc(t[2])}</pre>` : `<div class="md">${md(t[2])}</div>`) +
+    `</div>`).join("");
+}
+
+function closePanel(){ $("#panel").classList.remove("open");
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") $("#panel").classList.remove("open");
+  if (e.key === "Escape") closePanel();
   if (e.key === "/" && document.activeElement !== $("#q")) { e.preventDefault(); $("#q").focus(); }
 });
 
@@ -356,7 +456,7 @@ def build(csx):
                 idx = csx.load(quiet=True)
                 e = csx.pick(idx, qs.get("id", ""))[0]
                 turns = []
-                for role, ts, text in csx.msgs(e, True):
+                for role, ts, text in csx.msgs(e, qs.get("tools") == "1"):
                     if role == "user" and csx.is_noise(text):
                         continue
                     turns.append([role, csx.clock(ts), text[:20000]])

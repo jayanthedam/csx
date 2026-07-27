@@ -78,7 +78,10 @@ port, `--no-open` to skip the browser).
 
 - **Click a row** → copies `cd <cwd> && claude --resume <id>` (or `codex resume <id>`)
 - **Click the id** → copies the raw session id
-- **Double-click** → full transcript, with the resume command as a copy chip
+- **Double-click** → full transcript, rendered as Markdown. **← Back to list**
+  or `Esc` returns. **Raw text** shows the unrendered source; **Tool calls**
+  folds the agent's tool invocations back in (hidden by default — they drown
+  out the conversation)
 - Search in **Titles / Messages / Everything**, filter by tool, toggle subagent runs
 - **Folder dropdown** — each folder and how many sessions ran in it
   (`~/ABL — 21 sessions`). Picking one shows exactly that count; nested folders
@@ -142,6 +145,17 @@ number you get. `~/ABL` is 21 sessions; `~/ABL --sub` is 331.
 
 `-p` is different and deliberately loose: `-p abl-platform` is a substring match,
 so it *does* also hit `abl-platform-deploy`. Use `-i` when you mean one folder.
+
+**Markdown.** Transcripts are Markdown, so the reader renders them — fenced code,
+headings, lists, tables, blockquotes, inline code, links, bold/italic — with a
+~60-line renderer rather than a library, since the page must stay self-contained.
+Input is HTML-escaped before any transform, and fenced blocks are lifted out
+first so their contents are never treated as markup.
+
+**Z-index.** The panel is `position:fixed; inset:0`, which is *not* enough to sit
+above a `position:sticky` header — the header wins on paint order regardless of
+coverage, so its own Back button was unclickable underneath. The panel needs an
+explicit `z-index` above the header's.
 
 **Clocks.** Everything renders in local 12-hour time. Transcript timestamps are
 stored UTC with a `Z`, so they're converted, not truncated — reading `13:47Z` as
