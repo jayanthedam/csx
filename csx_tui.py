@@ -12,8 +12,9 @@ import shlex
 import sys
 
 KEYS = [
-    ("enter", "resume"), ("^o", "fork"), ("^r", "read"), ("^d", "deep"), ("^g", "global"),
-    ("^p", "prompts"), ("^y", "today"), ("^f", "pick folder"), ("tab", "tool"),
+    ("enter", "resume"), ("^y", "copy"), ("^x", "danger"), ("^o", "fork"),
+    ("^r", "read"), ("^d", "deep"), ("^g", "global"),
+    ("^p", "prompts"), ("^t", "today"), ("^f", "pick folder"), ("tab", "tool"),
     ("^u", "clear"), ("^n/^k", "move"), ("esc", "quit"),
 ]
 HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
@@ -107,6 +108,7 @@ class Tui:
         self.mode = "title"          # title | deep | global | prompts
         self.src = ""                # "" | claude | codex
         self.today = False
+        self.danger = False          # resume/copy with permissions bypassed
         self.folders = [("", "all folders")] + [
             (p, self.short(p), n) for p, n, _ in csx.folders(self.all)]
         self.folders[0] = ("", "all folders", len(self.all))
@@ -228,6 +230,8 @@ class Tui:
             os.chdir(cwd)
         argv = (["codex", "resume", e["id"]] if e.get("src") == "codex"
                 else ["claude", "--resume", e["id"]] + (["--fork-session"] if fork else []))
+        if self.danger:
+            argv.append(self.csx.DANGER["codex" if e.get("src") == "codex" else "claude"])
         curses.endwin()
         print(f"\n→ {' '.join(argv)}   ({cwd})\n", flush=True)
         os.execvp(argv[0], argv)          # this process becomes the session
@@ -264,7 +268,9 @@ class Tui:
         head = f" {self.mode}> {self.q}"
         scr.addnstr(0, 0, head.ljust(w - 1), w - 1, curses.A_BOLD)
         state = (f" {self.folders[self.fi][1]} · {self.src or 'claude+codex'}"
-                 f"{' · today' if self.today else ''} · {len(self.rows)} shown"
+                 f"{' · today' if self.today else ''}"
+                 f"{' · ⚠ danger (no prompts)' if self.danger else ''}"
+                 f" · {len(self.rows)} shown"
                  + (f" · {banner or self.note}" if (banner or self.note) else ""))
         scr.addnstr(1, 0, state.ljust(w - 1), w - 1, dim)
         y = 2
@@ -480,10 +486,21 @@ class Tui:
                 self.run_search("global", scr)
             elif ch == "\x10":                       # ^p prompt log
                 self.run_search("prompts", scr)
-            elif ch == "\x19":                       # ^y today
+            elif ch == "\x14":                       # ^t today
                 self.today = not self.today
                 self.mode = "title"
                 self.refilter()
+            elif ch == "\x18":                       # ^x danger toggle
+                self.danger = not self.danger
+                self.note = ("resume/copy will bypass permission prompts"
+                             if self.danger else "back to normal resume")
+            elif ch == "\x19":                       # ^y copy the resume command
+                e = self.current()
+                if e and e.get("kind") != "gone":
+                    cmd = self.csx.resume_cmd(e, danger=self.danger)
+                    tool = self.csx.clip(cmd)
+                    self.note = (f"copied ({tool})" + (" ⚠ danger" if self.danger else "")
+                                 if tool else "no clipboard tool (wl-copy/xclip/xsel)")
             elif ch == "\x06":                       # ^f folder picker
                 self.picker = {"q": "", "sel": self.fi}
             elif ch == "\t":                         # tab tool

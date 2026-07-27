@@ -46,6 +46,9 @@ Read-only. It never writes to either tool's directory — its own index lives at
 | `-b BRANCH` | only sessions on that git branch |
 | `--empty` | include sessions with no messages (hidden by default) |
 | `--live` | only sessions running right now |
+| `resume --danger` | add the permission-bypass flag for that tool |
+| `resume --fork` | branch the session instead of continuing it |
+| `resume --copy` | put the command on the clipboard |
 | `--claude` / `--codex` | restrict to one tool |
 | `-p NAME` | substring match on project name or cwd |
 | `-i PATH` | only sessions run in PATH **itself** (`-i ~/ABL`) |
@@ -93,6 +96,10 @@ Type to filter titles live. `^d` / `^g` / `^p` run the slower searches on what
 you typed (message bodies / everything / your prompt log). `^y` toggles today
 plus its summary line, `tab` cycles Claude/Codex/both.
 
+`^y` copies the resume command (wl-copy / xclip / xsel / pbcopy). `^x` toggles
+**danger mode** — resume, fork and copy then carry the permission-bypass flag,
+and the state line says `⚠ danger (no prompts)` so it is never a surprise.
+
 `^f` opens a folder picker — every folder with a session count, type to filter,
 enter to scope. (It started as "cycle to the next folder", which is unusable at
 28 folders.)
@@ -119,6 +126,9 @@ port, `--no-open` to skip the browser).
 - **▶ Resume** on any row opens a new terminal already inside that session
   (`claude --resume` / `codex resume`, in the right cwd). ⧉ Copy still copies
   the command instead, if you'd rather paste it yourself
+- **⚠ danger** checkbox — Resume, Fork and the copied command all switch to the
+  permission-bypass flag (`--dangerously-skip-permissions` for Claude,
+  `--dangerously-bypass-approvals-and-sandbox` for Codex)
 - **Today** filters to sessions you touched today and shows a summary strip:
   count, messages, first→last span, and which folders they were in
 - **Prompts** is a fourth search mode over `~/.claude/history.jsonl` — every

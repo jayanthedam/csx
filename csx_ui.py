@@ -57,6 +57,8 @@ main{padding:6px 0 40px}
 #day{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--dim);font-size:12.5px;display:none}
 #day.on{display:block}
 #day b{color:var(--fg)}
+#dangerWrap.on{color:#b45309}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) #dangerWrap.on{color:#fbbf24}}
 .proj{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .branch{color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -119,6 +121,9 @@ mark{background:var(--hl);color:inherit}
       <option value="codex">Codex only</option></select>
     <label style="color:var(--dim)" title="Background agents launched inside a session">
       <input type="checkbox" id="subs"> include subagent runs</label>
+    <label id="dangerWrap" style="color:var(--dim)"
+      title="Resume/Fork/Copy with permission prompts turned off — claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox">
+      <input type="checkbox" id="danger"> ⚠ danger</label>
     <button id="theme" title="Switch between light, dark and system theme">Theme: Auto</button>
   </div>
   <div class="hint" id="hint">↑↓ move · Enter read · <b>o</b> open in terminal · <b>y</b> copy · / search</div>
@@ -203,7 +208,7 @@ async function load(){
       <span class="proj" title="${esc(e.cwd)}">${esc(e.proj)}</span>
       <span class="branch" title="git branch">${esc(e.branch || "")}</span>
       <span class="title">${mark(e.title||"(no message text)", q)}</span>
-      <span class="act">${e.cmd ? `<button class="go" data-id="${e.id}" title="Open a terminal already resumed in this session">▶ Resume</button>` +
+      <span class="act" data-danger="${esc(e.cmdDanger || "")}">${e.cmd ? `<button class="go" data-id="${e.id}" title="Open a terminal already resumed in this session">▶ Resume</button>` +
         (e.forkable ? ` <button class="fork" data-id="${e.id}" title="Resume as a new branch of this session (--fork-session), leaving the original untouched">⑂ Fork</button>` : ``) : `<span class="gone">session gone</span>`}</span>
     </div>` + (e.hits && e.hits.length ? `<div class="hits">` +
       e.hits.map(h=>`<div><b>${h[0]}</b> <span class="when">${h[1]}</span> …${mark(h[2], q)}…</div>`).join("") + `</div>` : "")
@@ -227,14 +232,22 @@ $("#list").addEventListener("click", e => {
   if (idc){ copy(idc.dataset.copy, "id"); e.stopPropagation(); return; }
   const row = e.target.closest(".row");
   if (row){ select([...document.querySelectorAll(".row")].indexOf(row));
-            copy(row.dataset.cmd, "resume command"); }
+            copyRow(row); }
 });
+
+function copyRow(row){
+  const d = $("#danger").checked;
+  const cmd = d ? (row.querySelector(".act")?.dataset.danger || row.dataset.cmd)
+                : row.dataset.cmd;
+  copy(cmd, d ? "resume command ⚠ danger" : "resume command");
+}
 
 async function launch(id, fork){
   toast(fork ? "forking…" : "opening terminal…");
   try {
     const d = await (await fetch("/api/launch?id=" + encodeURIComponent(id) +
-                                 (fork ? "&fork=1" : ""))).json();
+                                 (fork ? "&fork=1" : "") +
+                                 ($("#danger").checked ? "&danger=1" : ""))).json();
     toast(d.ok ? `${fork ? "forked" : "resumed"} in ${d.terminal}` : `couldn't launch: ${d.error}`);
   } catch(e){ toast("launch failed: " + e.message); }
 }
@@ -366,7 +379,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "G"){ select(rows().length - 1); }
   else if (sel >= 0 && r[sel]){
     if (e.key === "Enter"){ e.preventDefault(); open_session(r[sel].dataset.id); }
-    else if (e.key === "y"){ copy(r[sel].dataset.cmd, "resume command"); }
+    else if (e.key === "y"){ copyRow(r[sel]); }
     else if (e.key === "o"){ launch(r[sel].dataset.id); }
   }
 });
@@ -502,6 +515,7 @@ def build(csx):
                 "cwd": e.get("cwd") or "",
                 "title": e["title"],
                 "cmd": csx.resume_cmd(e),
+                "cmdDanger": csx.resume_cmd(e, danger=True),
                 "forkable": e.get("src") != "codex",
                 "live": e["id"] in live,
                 "hits": e.get("_hits", []),
@@ -613,9 +627,12 @@ def build(csx):
                         e = par[0]
                 # built only from indexed values, never from page input
                 fork = qs.get("fork") == "1" and e.get("src") != "codex"
+                danger = qs.get("danger") == "1"
                 sh = (f"cd {shlex.quote(e.get('cwd') or os.path.expanduser('~'))} && "
                       f"exec {'codex resume' if e.get('src') == 'codex' else 'claude --resume'} "
-                      f"{shlex.quote(e['id'])}" + (" --fork-session" if fork else ""))
+                      f"{shlex.quote(e['id'])}" + (" --fork-session" if fork else "")
+                      + (" " + csx.DANGER["codex" if e.get("src") == "codex" else "claude"]
+                         if danger else ""))
                 argv, term = csx.terminal_argv(sh)
                 if qs.get("dry") == "1":          # inspect the command without running it
                     return self._send(json.dumps({"ok": True, "dry": True,
@@ -660,7 +677,8 @@ def build(csx):
                     "id": e["id"], "src": e.get("src", "claude"), "cwd": e.get("cwd") or "?",
                     "label": f"{agent} · {e['id'][:8]}",
                     "turns": e["turns"], "start": csx.clock(e["start"]), "end": csx.clock(e["end"]),
-                    "cmd": csx.resume_cmd(e), "turns_list": turns}), "application/json")
+                    "cmd": csx.resume_cmd(e),
+                "cmdDanger": csx.resume_cmd(e, danger=True), "turns_list": turns}), "application/json")
             self.send_error(404)
 
     return H

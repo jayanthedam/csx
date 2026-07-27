@@ -687,14 +687,39 @@ def pick(idx, ident):
     return hit
 
 
-def resume_cmd(e, fork=False):
+DANGER = {"claude": "--dangerously-skip-permissions",
+          "codex": "--dangerously-bypass-approvals-and-sandbox"}
+
+
+def resume_cmd(e, fork=False, danger=False):
+    cwd = e.get("cwd") or "~"
     if e.get("src") == "codex":
-        return f"cd {e.get('cwd') or '~'} && codex resume {e['id']}"
-    return (f"cd {e.get('cwd') or '~'} && claude --resume {e['id']}"
-            + (" --fork-session" if fork else ""))
+        return (f"cd {cwd} && codex resume {e['id']}"
+                + (f" {DANGER['codex']}" if danger else ""))
+    return (f"cd {cwd} && claude --resume {e['id']}"
+            + (" --fork-session" if fork else "")
+            + (f" {DANGER['claude']}" if danger else ""))
 
 
-def cmd_resume(idx, ident):
+def clip(text):
+    """Copy to the system clipboard. Returns the tool used, or None."""
+    import shutil
+    import subprocess
+    for tool, argv in (("wl-copy", ["wl-copy"]),
+                       ("xclip", ["xclip", "-selection", "clipboard"]),
+                       ("xsel", ["xsel", "--clipboard", "--input"]),
+                       ("pbcopy", ["pbcopy"])):
+        if shutil.which(tool):
+            try:
+                subprocess.run(argv, input=text.encode(), check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return tool
+            except Exception:
+                continue
+    return None
+
+
+def cmd_resume(idx, ident, danger=False, fork=False, do_copy=False):
     hit = pick(idx, ident)
     if len(hit) > 1:
         emit(f"{C['dim']}{len(hit)} matches — be more specific:{C['r']}")
@@ -706,7 +731,12 @@ def cmd_resume(idx, ident):
             sys.exit(f"{e['id']} is a subagent run; parent {e['parent']} not indexed")
         emit(f"{C['dim']}{e['id'][:8]} is a subagent run — resuming its parent:{C['r']}")
         e = par[0]
-    emit(resume_cmd(e))
+    cmd = resume_cmd(e, fork=fork, danger=danger)
+    if do_copy:
+        tool = clip(cmd)
+        emit(f"{C['dim']}copied via {tool}{C['r']}" if tool
+             else f"{C['dim']}no clipboard tool found (wl-copy/xclip/xsel){C['r']}")
+    emit(cmd)
 
 
 def cmd_show(idx, ident, meta, grep):
@@ -752,6 +782,7 @@ def main():
                "  csx show cf36f5b1         read a transcript\n"
                "  csx show cf36f5b1 -G OOM  only turns matching a regex\n"
                "  csx resume cf36f5b1       print the exact resume command\n"
+               "  csx resume cf36f5b1 --copy --danger   ...on the clipboard, no prompts\n"
                "  csx tui                   full-screen terminal UI; enter resumes in place\n"
                "  csx ui                    local web UI, click-to-copy (port 8787)",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -764,6 +795,12 @@ def main():
     ap.add_argument("-s", "--subagents", action="store_true", help="include subagent runs")
     ap.add_argument("-b", "--branch", help="only sessions on this git branch")
     ap.add_argument("--live", action="store_true", help="only sessions running right now")
+    ap.add_argument("--danger", action="store_true",
+                    help="with resume: add the skip-permissions / bypass-sandbox flag")
+    ap.add_argument("--fork", action="store_true",
+                    help="with resume: branch the session (--fork-session)")
+    ap.add_argument("--copy", action="store_true",
+                    help="with resume: put the command on the clipboard")
     ap.add_argument("--empty", action="store_true",
                     help="include sessions with no messages (hidden by default)")
     ap.add_argument("--codex", action="store_true", help="only Codex sessions")
@@ -810,7 +847,7 @@ def main():
         if a.terms[0] == "show":
             cmd_show(idx, a.terms[1], a.meta, a.grep)
         else:
-            cmd_resume(idx, a.terms[1])
+            cmd_resume(idx, a.terms[1], danger=a.danger, fork=a.fork, do_copy=a.copy)
         return flush()
 
     idx = load(a.rescan)
