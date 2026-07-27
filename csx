@@ -23,7 +23,7 @@ CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
 HISTORY = os.path.expanduser("~/.claude/history.jsonl")
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
-CACHE_V = 6
+CACHE_V = 7
 
 C = {"dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
      "y": "\033[33m", "c": "\033[36m", "g": "\033[32m", "m": "\033[35m"}
@@ -152,8 +152,7 @@ def head(path, src):
                                 named = (d.get("aiTitle") or "").strip()
                         except Exception:
                             pass
-                    if cwd and renamed:
-                        break
+                    pass
     except OSError:
         pass
     title = named
@@ -194,10 +193,12 @@ def profile(path, src):
                     text = "\n".join(c.get("text", "") for c in p.get("content", [])
                                      if isinstance(c, dict))
             else:
+                # both records are rewritten as a session evolves — keep the
+                # LAST one, which is the name Claude Code itself displays
                 if t == "custom-title" and d.get("customTitle"):
                     renamed = d["customTitle"].strip()       # you ran /rename — always wins
-                elif t == "ai-title" and not named:
-                    named = (d.get("aiTitle") or "").strip()
+                elif t == "ai-title" and d.get("aiTitle"):
+                    named = d["aiTitle"].strip()
                 role, ts, text = None, d.get("timestamp", ""), None
                 if t in ("user", "assistant"):
                     role = t

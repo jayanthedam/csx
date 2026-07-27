@@ -130,6 +130,10 @@ skips little while scanning every (sometimes 100 KB) line three more times.
    sessions have one.
 3. the first real user message.
 
+Both title records are **rewritten as the session evolves** — one session here
+carries 46 copies of an old name followed by 87 of the current one. Take the
+last, not the first, or the list disagrees with Claude Code's own picker.
+
 The fallback filters noise first: system reminders,
 skill preambles, `AGENTS.md` blocks and Codex's `<environment_context>` are
 filtered out first, or the title is a wall of boilerplate. Codex writes no title
