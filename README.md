@@ -71,7 +71,28 @@ csx -i ~/ABL -d OOM       # scoping also makes search faster — less to read
 A bare `csx some words` searches titles; if nothing matches it falls back to a
 body search automatically, so you rarely have to pick a flag.
 
-## UI
+## TUI — `csx tui`
+
+The same thing without leaving the terminal, and the reason to prefer it:
+**Enter doesn't copy a command or spawn a window — the process `exec`s into the
+session.** You are just in it.
+
+```
+ title> agent tables
+ ~/ABL (21) · claude+codex · 12 shown
+   TOOL    WHEN            MSGS FOLDER           TITLE
+ ▸ claude  jul 27 12:27pm    50 ABL              AGENT TABLES
+   claude  jul 27 12:25pm  1439 ABL              Map agent tables setup across dev and QA
+ enter resume · ^r read · ^d deep · ^g global · ^p prompts · ^y today · ^f folder …
+```
+
+Type to filter titles live. `^d` / `^g` / `^p` run the slower searches on what
+you typed (message bodies / everything / your prompt log). `^y` toggles today
+plus its summary line, `^f` cycles folders, `tab` cycles Claude/Codex/both.
+`^r` opens the transcript in a built-in scrolling reader — `enter` resumes from
+in there too. Stdlib `curses`, no dependencies.
+
+## Browser UI
 
 `csx ui` serves `http://127.0.0.1:8787` and opens it (`csx ui 9000` for another
 port, `--no-open` to skip the browser).

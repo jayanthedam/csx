@@ -690,10 +690,11 @@ def main():
                "  csx show cf36f5b1         read a transcript\n"
                "  csx show cf36f5b1 -G OOM  only turns matching a regex\n"
                "  csx resume cf36f5b1       print the exact resume command\n"
+               "  csx tui                   full-screen terminal UI; enter resumes in place\n"
                "  csx ui                    local web UI, click-to-copy (port 8787)",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("terms", nargs="*",
-                    help="search terms, or `show <id>` / `resume <id>` / `ui [port]`")
+                    help="search terms, or `show <id>` / `resume <id>` / `tui` / `ui [port]`")
     ap.add_argument("-d", "--deep", action="store_true", help="search message bodies")
     ap.add_argument("-g", "--global", dest="glob", action="store_true",
                     help="global search: titles + bodies + tool calls + subagent runs")
@@ -724,6 +725,11 @@ def main():
     if a.no_pager:
         PAGER_ON = False
     FULL_IDS[0] = a.full
+
+    if a.terms and a.terms[0] in ("tui", "t"):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import csx_tui
+        return csx_tui.run(sys.modules[__name__])
 
     if a.terms and a.terms[0] in ("ui", "serve"):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
