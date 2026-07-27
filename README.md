@@ -92,15 +92,23 @@ pre-selected text box appears instead of a toast that lies about having copied.
 
 ## Design notes
 
-**The index.** One pass over every JSONL builds `~/.claude/.csx-index.json`
-(path, id, tool, cwd, project, first/last timestamp, message count, title).
-Entries are invalidated by `mtime` + `size`, so a rebuild only re-reads what
-changed. Full build ≈ 6s for ~800 files; warm start is instant.
+**The index.** One read per file builds `~/.claude/.csx-index.json` (path, id,
+tool, cwd, project, first/last timestamp, message count, title). Entries are
+invalidated by `mtime` + `size`, so a rebuild only re-reads what changed — the
+day-to-day cost is ~0.2s. A full cold rebuild of ~800 files / 1.3 GB is ~14s.
 
-**Titles.** Claude Code writes a `summary` record for some sessions — that wins.
-Otherwise it's the first real user message, with system reminders, skill preambles,
-`AGENTS.md` blocks and Codex's `<environment_context>` filtered out, or you get a
-wall of boilerplate instead of a title.
+`json.loads` is ~60% of that. Gating it behind a raw-substring check made things
+*worse*: most Claude lines are genuinely `user`/`assistant` records, so the gate
+skips little while scanning every (sometimes 100 KB) line three more times.
+
+**Titles.** Claude Code names sessions itself and stores that as an `ai-title`
+record — the same name its own session picker shows ("Analyze work patterns and
+improve productivity"). About 63% of sessions have one; that always wins.
+
+Everything else falls back to the first real user message: system reminders,
+skill preambles, `AGENTS.md` blocks and Codex's `<environment_context>` are
+filtered out first, or the title is a wall of boilerplate. Codex writes no title
+record of its own, so Codex rows are always first-message titles.
 
 **Why search is fast.** The obvious prefilter — decode each file to `str`, then
 `re.search(..., re.I)` — costs 8.15s over 892 MB. Reading bytes and doing

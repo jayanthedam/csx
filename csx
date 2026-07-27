@@ -22,7 +22,7 @@ CLAUDE_ROOT = os.path.expanduser("~/.claude/projects")
 CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
-CACHE_V = 4
+CACHE_V = 5
 
 C = {"dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
      "y": "\033[33m", "c": "\033[36m", "g": "\033[32m", "m": "\033[35m"}
@@ -122,13 +122,16 @@ def is_noise(text):
 
 
 def head(path, src):
-    """(cwd, session_id, title) read cheaply from the file."""
-    cwd = sid = summary = ""
+    """(cwd, session_id, title) read cheaply from the file.
+
+    Claude Code names sessions itself and stores that as an `ai-title` record —
+    the same name its own session list shows. Present for ~2/3 of sessions and
+    always better than the first prompt. Codex writes nothing equivalent.
+    """
+    cwd = sid = named = ""
     try:
         with open(path, encoding="utf-8", errors="ignore") as fh:
-            for i, line in enumerate(fh):
-                if i > 400:
-                    break
+            for line in fh:
                 if not cwd:
                     m = re.search(r'"cwd":"([^"]+)"', line)
                     if m:
@@ -141,24 +144,73 @@ def head(path, src):
                     if cwd and sid:
                         break
                 else:
-                    if not summary and '"summary"' in line[:60]:
+                    if not named and '"ai-title"' in line:
                         try:
                             d = json.loads(line)
-                            if d.get("type") == "summary":
-                                summary = (d.get("summary") or "").strip()
+                            if d.get("type") == "ai-title":
+                                named = (d.get("aiTitle") or "").strip()
                         except Exception:
                             pass
-                    if cwd and summary:
+                    if cwd and named:
                         break
     except OSError:
         pass
-    title = summary
+    title = named
     if not title:
         for role, _, text in msgs(path):
             if role == "user" and not is_noise(text):
                 title = " ".join(text.split())[:160]
                 break
     return cwd, sid, title
+
+
+def profile(path, src):
+    """One read per file: message count, first/last timestamp, cwd, id, title."""
+    n = 0
+    first = last = cwd = sid = named = first_msg = ""
+    try:
+        fh = open(path, encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0, "", "", "", "", ""
+    with fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            t = d.get("type")
+            if not cwd:
+                cwd = d.get("cwd") or (d.get("payload", {}) or {}).get("cwd", "") \
+                    if isinstance(d.get("payload"), dict) or d.get("cwd") else ""
+            if src == "codex":
+                if not sid and isinstance(d.get("payload"), dict):
+                    sid = d["payload"].get("session_id", "") or sid
+                role, ts, text = None, d.get("timestamp", ""), None
+                p = d.get("payload", {})
+                if t == "response_item" and isinstance(p, dict) and p.get("type") == "message" \
+                        and p.get("role") in ("user", "assistant"):
+                    role = p["role"]
+                    text = "\n".join(c.get("text", "") for c in p.get("content", [])
+                                     if isinstance(c, dict))
+            else:
+                if t == "ai-title" and not named:
+                    named = (d.get("aiTitle") or "").strip()
+                role, ts, text = None, d.get("timestamp", ""), None
+                if t in ("user", "assistant"):
+                    role = t
+                    c = d.get("message", {}).get("content")
+                    if isinstance(c, list):
+                        c = "\n".join(x.get("text", "") for x in c
+                                      if isinstance(x, dict) and x.get("type") == "text")
+                    text = c if isinstance(c, str) else ""
+            if role and text and text.strip():
+                n += 1
+                if ts:
+                    first = first or ts
+                    last = ts
+                if role == "user" and not first_msg and not is_noise(text):
+                    first_msg = " ".join(text.split())[:160]
+    return n, first, last, cwd, sid, (named or first_msg)
 
 
 # ---------- index ----------
@@ -198,15 +250,7 @@ def scan(quiet=False):
             out.append(prev)
             continue
         fresh += 1
-        first = last = ""
-        n = 0
-        e = {"path": p, "src": src}
-        for _, ts, _ in msgs(e):
-            n += 1
-            if ts:
-                first = first or ts
-                last = ts
-        cwd, sid, title = head(p, src)
+        n, first, last, cwd, sid, title = profile(p, src)
         if src == "codex":
             m = re.search(r"([0-9a-f]{8}-[0-9a-f-]{27,})", fn)
             ident = sid or (m.group(1) if m else fn[:-6])
@@ -217,6 +261,7 @@ def scan(quiet=False):
             parent = os.path.basename(os.path.dirname(dirpath)) if sub else ""
             project = os.path.basename(
                 os.path.dirname(os.path.dirname(dirpath)) if sub else dirpath)
+        e = {"path": p, "src": src}
         e.update({"id": ident, "kind": "sub" if sub else "main", "parent": parent,
                   "project": project, "cwd": cwd, "mtime": st.st_mtime,
                   "size": st.st_size, "turns": n, "start": first, "end": last,
