@@ -352,11 +352,13 @@ def cmd_deep(idx, terms, limit, ctx, meta, per=4):
         emit(f"{C['dim']}no matches{C['r']}")
 
 
-def in_tree(cwd, root, subtree=True):
-    """Does a session's cwd sit at (or under) root?
+def in_tree(cwd, root, subtree=False):
+    """Did a session run in root — or, with subtree=True, anywhere below it?
 
-    Uses a separator-anchored prefix so ~/ABL/abl-platform does NOT swallow
-    ~/ABL/abl-platform-deploy, -infra, or _worktrees.
+    Exact by default, matching the CLI (-i) and the UI folder picker: the count
+    you select is the count you get. The prefix check is separator-anchored, so
+    ~/ABL/abl-platform never swallows ~/ABL/abl-platform-deploy, -infra or
+    _worktrees.
     """
     if root == NO_CWD:
         return not cwd
@@ -458,9 +460,9 @@ def main():
                "  csx -g base_row_id        global: + tool calls + subagent runs\n"
                "  csx --codex               only Codex sessions\n"
                "  csx -p abl-platform       filter by project name / cwd substring\n"
-               "  csx -i ~/ABL              only sessions under that folder\n"
-               "  csx -i ~/ABL --only       that folder exactly, no subfolders\n"
-               "  csx -H                    only sessions from the current directory down\n"
+               "  csx -i ~/ABL              sessions run in ~/ABL itself\n"
+               "  csx -i ~/ABL --sub        ~/ABL plus everything nested inside it\n"
+               "  csx -H                    sessions run in the current directory\n"
                "  csx --folders             every folder that has sessions, with counts\n"
                "  csx -f                    full session ids\n"
                "  csx show cf36f5b1         read a transcript\n"
@@ -479,11 +481,11 @@ def main():
     ap.add_argument("--claude", action="store_true", help="only Claude Code sessions")
     ap.add_argument("-p", "--project", help="substring filter on project / cwd")
     ap.add_argument("-i", "--in", dest="inpath", metavar="PATH",
-                    help="only sessions whose cwd is PATH or below it (e.g. -i ~/ABL)")
+                    help="only sessions run in PATH itself (e.g. -i ~/ABL)")
     ap.add_argument("-H", "--here", action="store_true",
-                    help="only sessions from the current directory and below")
-    ap.add_argument("--only", action="store_true",
-                    help="with -i/-H: exact folder, do not include subfolders")
+                    help="only sessions run in the current directory")
+    ap.add_argument("--sub", action="store_true",
+                    help="with -i/-H: include folders nested inside it too")
     ap.add_argument("--folders", action="store_true",
                     help="list every folder that has sessions, with counts")
     ap.add_argument("-n", "--limit", type=int, help="max results (default: all)")
@@ -529,14 +531,14 @@ def main():
                if a.project.lower() in (e.get("project", "") + " " + e.get("cwd", "")).lower()]
     root = os.getcwd() if a.here else a.inpath
     if root:
-        idx = [e for e in idx if in_tree(e.get("cwd"), root, not a.only)]
-        SCOPE[0] = f" in {os.path.normpath(os.path.expanduser(root))}" + ("" if not a.only else " (exact)")
+        idx = [e for e in idx if in_tree(e.get("cwd"), root, a.sub)]
+        SCOPE[0] = (f" in {os.path.normpath(os.path.expanduser(root))}"
+                    + (" and its subfolders" if a.sub else " only"))
 
     if a.folders:
         rows = folders(idx)   # honors --codex/--claude/-s/-p already applied
         if root:
-            rows = [r for r in rows if in_tree(r[0], root, not a.only) or r[0] == os.path.normpath(
-                os.path.expanduser(root))]
+            rows = [r for r in rows if in_tree(r[0], root, True)]
         emit(f"{C['dim']}{'here':>6} {'+sub':>6}  folder{C['r']}")
         for cwd, own, deep in rows:
             sub = f"{C['dim']}{deep - own:>6}{C['r']}" if deep > own else f"{C['dim']}{'-':>6}{C['r']}"
@@ -544,8 +546,8 @@ def main():
         total = sum(o for _, o, _ in rows)
         emit(f"{C['dim']}{len(rows)} folder(s), {total} session(s) — each counted once, "
              f"under the folder it actually ran in.{C['r']}")
-        emit(f"{C['dim']}`csx -i <path>` includes subfolders; add --only for just that "
-             f"folder.{C['r']}")
+        emit(f"{C['dim']}`csx -i <path>` shows the 'here' count; add --sub to include "
+             f"the subfolder count too.{C['r']}")
         return flush()
 
     limit = 10 ** 6 if (a.all or a.limit is None) else a.limit

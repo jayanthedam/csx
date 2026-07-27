@@ -78,7 +78,7 @@ mark{background:var(--hl);color:inherit}
     <select id="folder" title="Limit to one working folder">
       <option value="">All folders</option></select>
     <label style="color:var(--dim)" title="Include sessions from folders nested inside the one you picked">
-      <input type="checkbox" id="subdirs" checked> + subfolders</label>
+      <input type="checkbox" id="subdirs"> + subfolders</label>
     <select id="src" title="Which tool the session belongs to">
       <option value="">Claude + Codex</option><option value="claude">Claude Code only</option>
       <option value="codex">Codex only</option></select>
@@ -167,8 +167,11 @@ async function load(){
       e.hits.map(h=>`<div><b>${h[0]}</b> <span class="when">${h[1]}</span> …${mark(h[2], q)}…</div>`).join("") + `</div>` : "")
   ).join("");
   const what = mode==="title" ? "titles" : (mode==="deep" ? "messages" : "everything");
+  const f = $("#folder"), scope = f.value
+    ? ` in ${f.options[f.selectedIndex].text.split(" — ")[0]}` +
+      ($("#subdirs").checked ? " and its subfolders" : " only") : ``;
   $("#hint").textContent =
-    `${d.rows.length}${d.partial?"+ (showing first 80)":(q?" matching":"")} of ${d.total} sessions` +
+    `${d.rows.length}${d.partial?"+ (showing first 80)":(q?" matching":"")} of ${d.total} sessions${scope}` +
     (q?` · searched ${what} in ${(d.ms/1000).toFixed(1)}s`:``) +
     ` · click a row to copy its resume command · double-click to read it`;
 }
@@ -244,7 +247,7 @@ load();
 def build(csx):
     """Return a request handler bound to the csx module (avoids a circular import)."""
 
-    def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=True):
+    def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=False):
         idx = csx.load(quiet=True)
         if folder:
             idx = [e for e in idx if csx.in_tree(e.get("cwd"), folder, subdirs)]
@@ -332,7 +335,7 @@ def build(csx):
                 rows, total = rows_for(qs.get("q", ""), qs.get("mode", "title"),
                                        qs.get("src", ""), qs.get("subs") == "1",
                                        folder=qs.get("folder", ""),
-                                       subdirs=qs.get("subdirs", "1") == "1")
+                                       subdirs=qs.get("subdirs", "0") == "1")
                 partial = qs.get("mode", "title") != "title" and total >= 80
                 ms = int((csx.dt.datetime.now() - t0).total_seconds() * 1000)
                 return self._send(json.dumps({"rows": rows, "total": total, "ms": ms,

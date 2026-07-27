@@ -45,9 +45,9 @@ Read-only. It never writes to either tool's directory — its own index lives at
 | `-s` | include subagent runs in the listing |
 | `--claude` / `--codex` | restrict to one tool |
 | `-p NAME` | substring match on project name or cwd |
-| `-i PATH` | only sessions whose cwd is PATH **or below it** (`-i ~/ABL`) |
-| `-H` | same, scoped to the directory you're standing in |
-| `--only` | with `-i`/`-H`: that folder exactly, ignore subfolders |
+| `-i PATH` | only sessions run in PATH **itself** (`-i ~/ABL`) |
+| `-H` | same, for the directory you're standing in |
+| `--sub` | with `-i`/`-H`: include folders nested inside it too |
 | `--folders` | list every folder that has sessions, with counts |
 | `-n N` / `-a` | cap results / no cap |
 | `-f` | print full session ids instead of the 8-char prefix |
@@ -62,10 +62,10 @@ live in the latter. To see only the ones you ran from `~/ABL` itself:
 
 ```bash
 csx --folders             # what folders exist, and how many sessions each holds
-csx -i ~/ABL              # ~/ABL and everything under it   → 330 sessions
-csx -i ~/ABL --only       # ~/ABL exactly, no subfolders     → 21 sessions
+csx -i ~/ABL              # ~/ABL itself                    → 21 sessions
+csx -i ~/ABL --sub        # ~/ABL + everything nested in it  → 331 sessions
 csx -H                    # whatever directory you're in right now
-csx -i ~/ABL --only -d OOM   # scoping also makes search faster — less to read
+csx -i ~/ABL -d OOM       # scoping also makes search faster — less to read
 ```
 
 A bare `csx some words` searches titles; if nothing matches it falls back to a
@@ -80,8 +80,10 @@ port, `--no-open` to skip the browser).
 - **Click the id** → copies the raw session id
 - **Double-click** → full transcript, with the resume command as a copy chip
 - Search in **Titles / Messages / Everything**, filter by tool, toggle subagent runs
-- **Folder dropdown** lists every working folder with its session count; the
-  **+ subfolders** checkbox switches between subtree and exact-folder scope
+- **Folder dropdown** lists every working folder with its own session count.
+  Picking one shows exactly that count — nested folders are opt-in via
+  **+ subfolders**, because a picker that returns 331 rows when you clicked
+  "21 here" is just wrong
 - Theme: Auto / Light / Dark, remembered in `localStorage`
 - `/` focuses search, `Esc` closes the transcript
 
@@ -124,6 +126,10 @@ column. Three things that quietly go wrong here and are covered by `tests.py`:
 - **Sessions with no recorded cwd.** 9 of mine have none. They'd silently vanish
   from every folder filter, so they get their own `(no folder recorded)` bucket
   that you can scope to like any other folder.
+
+**Exact by default.** Both `-i` and the UI dropdown scope to the folder itself.
+Subfolders are opt-in (`--sub`, or the checkbox) so the number you pick is the
+number you get. `~/ABL` is 21 sessions; `~/ABL --sub` is 331.
 
 `-p` is different and deliberately loose: `-p abl-platform` is a substring match,
 so it *does* also hit `abl-platform-deploy`. Use `-i` when you mean one folder.
