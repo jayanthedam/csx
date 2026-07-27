@@ -272,6 +272,7 @@ def proj(e):
 
 FULL_IDS = [False]
 TRUNC = [""]
+SCOPE = [""]
 
 
 def row(e, w=100):
@@ -294,7 +295,7 @@ def show_list(rows):
         return
     for e in rows:
         emit(row(e))
-    emit(f"{C['dim']}{len(rows)} session(s){TRUNC[0]} · "
+    emit(f"{C['dim']}{len(rows)} session(s){TRUNC[0]}{SCOPE[0]} · "
          f"`csx show <id>` to read one, `csx resume <id>` to continue it, "
          f"`csx ui` for the browser view{C['r']}")
 
@@ -349,6 +350,29 @@ def cmd_deep(idx, terms, limit, ctx, meta, per=4):
             break
     if not shown:
         emit(f"{C['dim']}no matches{C['r']}")
+
+
+def in_tree(cwd, root, subtree=True):
+    """Does a session's cwd sit at (or under) root?"""
+    if not cwd:
+        return False
+    cwd = os.path.normpath(cwd)
+    root = os.path.normpath(os.path.expanduser(root))
+    return cwd == root or (subtree and cwd.startswith(root + os.sep))
+
+
+def folders(idx):
+    """[(cwd, own_count, subtree_count)] sorted by subtree count desc."""
+    own = {}
+    for e in idx:
+        c = e.get("cwd")
+        if c:
+            own[os.path.normpath(c)] = own.get(os.path.normpath(c), 0) + 1
+    out = []
+    for root, n in own.items():
+        deep = sum(v for c, v in own.items() if c == root or c.startswith(root + os.sep))
+        out.append((root, n, deep))
+    return sorted(out, key=lambda r: (-r[2], r[0]))
 
 
 def pick(idx, ident):
@@ -416,7 +440,11 @@ def main():
                "  csx -d base_row_id        deep search message bodies\n"
                "  csx -g base_row_id        global: + tool calls + subagent runs\n"
                "  csx --codex               only Codex sessions\n"
-               "  csx -p abl-platform       filter by project / cwd\n"
+               "  csx -p abl-platform       filter by project name / cwd substring\n"
+               "  csx -i ~/ABL              only sessions under that folder\n"
+               "  csx -i ~/ABL --only       that folder exactly, no subfolders\n"
+               "  csx -H                    only sessions from the current directory down\n"
+               "  csx --folders             every folder that has sessions, with counts\n"
                "  csx -f                    full session ids\n"
                "  csx show cf36f5b1         read a transcript\n"
                "  csx show cf36f5b1 -G OOM  only turns matching a regex\n"
@@ -433,6 +461,14 @@ def main():
     ap.add_argument("--codex", action="store_true", help="only Codex sessions")
     ap.add_argument("--claude", action="store_true", help="only Claude Code sessions")
     ap.add_argument("-p", "--project", help="substring filter on project / cwd")
+    ap.add_argument("-i", "--in", dest="inpath", metavar="PATH",
+                    help="only sessions whose cwd is PATH or below it (e.g. -i ~/ABL)")
+    ap.add_argument("-H", "--here", action="store_true",
+                    help="only sessions from the current directory and below")
+    ap.add_argument("--only", action="store_true",
+                    help="with -i/-H: exact folder, do not include subfolders")
+    ap.add_argument("--folders", action="store_true",
+                    help="list every folder that has sessions, with counts")
     ap.add_argument("-n", "--limit", type=int, help="max results (default: all)")
     ap.add_argument("-a", "--all", action="store_true", help="no result limit")
     ap.add_argument("-c", "--context", type=int, default=110, help="snippet radius")
@@ -474,6 +510,21 @@ def main():
     if a.project:
         idx = [e for e in idx
                if a.project.lower() in (e.get("project", "") + " " + e.get("cwd", "")).lower()]
+    root = os.getcwd() if a.here else a.inpath
+    if root:
+        idx = [e for e in idx if in_tree(e.get("cwd"), root, not a.only)]
+        SCOPE[0] = f" in {os.path.normpath(os.path.expanduser(root))}" + ("" if not a.only else " (exact)")
+
+    if a.folders:
+        rows = folders(idx)   # honors --codex/--claude/-s/-p already applied
+        if root:
+            rows = [r for r in rows if in_tree(r[0], root, not a.only) or r[0] == os.path.normpath(
+                os.path.expanduser(root))]
+        for cwd, own, deep in rows:
+            extra = f"{C['dim']} (+{deep - own} in subfolders){C['r']}" if deep > own else ""
+            emit(f"{C['c']}{own:>5}{C['r']} {cwd}{extra}")
+        emit(f"{C['dim']}{len(rows)} folder(s) · scope one with `csx -i <path>`{C['r']}")
+        return flush()
 
     limit = 10 ** 6 if (a.all or a.limit is None) else a.limit
 

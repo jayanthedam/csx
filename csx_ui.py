@@ -32,6 +32,8 @@ input[type=search]{flex:1;min-width:220px;padding:7px 10px;border:1px solid var(
 button,select{padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);
   color:var(--fg);font:inherit;cursor:pointer}
 button.on{border-color:var(--acc);color:var(--acc)}
+#folder{max-width:250px}
+select{max-width:170px}
 .hint{color:var(--dim);font-size:12px;padding-top:6px}
 main{padding:6px 0 40px}
 .row{display:grid;grid-template-columns:72px 88px 122px 68px 148px 1fr 86px;gap:10px;align-items:baseline;
@@ -73,6 +75,10 @@ mark{background:var(--hl);color:inherit}
     <button id="mTitle" class="on" title="Match the session title only — instant">Titles</button>
     <button id="mDeep" title="Match anything you or the agent said">Messages</button>
     <button id="mGlob" title="Messages + tool calls + subagent runs">Everything</button>
+    <select id="folder" title="Limit to one working folder">
+      <option value="">All folders</option></select>
+    <label style="color:var(--dim)" title="Include sessions from folders nested inside the one you picked">
+      <input type="checkbox" id="subdirs" checked> + subfolders</label>
     <select id="src" title="Which tool the session belongs to">
       <option value="">Claude + Codex</option><option value="claude">Claude Code only</option>
       <option value="codex">Codex only</option></select>
@@ -136,7 +142,8 @@ function mark(s, q){
 
 async function load(){
   const q = $("#q").value.trim();
-  const p = new URLSearchParams({q, mode, src: $("#src").value, subs: $("#subs").checked ? "1":"0"});
+  const p = new URLSearchParams({q, mode, src: $("#src").value, subs: $("#subs").checked ? "1":"0",
+                                 folder: $("#folder").value, subdirs: $("#subdirs").checked ? "1":"0"});
   $("#hint").textContent = "searching…";
   const r = await fetch("/api/list?"+p);
   const d = await r.json();
@@ -218,6 +225,15 @@ $("#mTitle").onclick = () => setMode("title");
 $("#mDeep").onclick  = () => setMode("deep");
 $("#mGlob").onclick  = () => setMode("global");
 $("#src").onchange = load; $("#subs").onchange = load;
+$("#folder").onchange = load; $("#subdirs").onchange = load;
+
+async function loadFolders(){
+  const d = await (await fetch("/api/folders")).json();
+  const sel = $("#folder");
+  sel.innerHTML = `<option value="">All folders (${d.total} sessions)</option>` +
+    d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.deep}</option>`).join("");
+}
+loadFolders();
 $("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, mode==="title"?120:450); };
 load();
 </script>
@@ -227,8 +243,10 @@ load();
 def build(csx):
     """Return a request handler bound to the csx module (avoids a circular import)."""
 
-    def rows_for(q, mode, src, subs, limit=5000, hitcap=80):
+    def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=True):
         idx = csx.load(quiet=True)
+        if folder:
+            idx = [e for e in idx if csx.in_tree(e.get("cwd"), folder, subdirs)]
         if not subs and mode != "global":
             idx = [e for e in idx if e.get("kind") != "sub"]
         if src == "codex":
@@ -311,12 +329,24 @@ def build(csx):
             if u.path == "/api/list":
                 t0 = csx.dt.datetime.now()
                 rows, total = rows_for(qs.get("q", ""), qs.get("mode", "title"),
-                                       qs.get("src", ""), qs.get("subs") == "1")
+                                       qs.get("src", ""), qs.get("subs") == "1",
+                                       folder=qs.get("folder", ""),
+                                       subdirs=qs.get("subdirs", "1") == "1")
                 partial = qs.get("mode", "title") != "title" and total >= 80
                 ms = int((csx.dt.datetime.now() - t0).total_seconds() * 1000)
                 return self._send(json.dumps({"rows": rows, "total": total, "ms": ms,
                                               "partial": partial}),
                                   "application/json")
+            if u.path == "/api/folders":
+                idx = [e for e in csx.load(quiet=True) if e.get("kind") != "sub"]
+                home = os.path.expanduser("~")
+                fl = [{"path": c,
+                       "short": ("~" + c[len(home):]) if c.startswith(home) else c,
+                       "own": own, "deep": deep}
+                      for c, own, deep in csx.folders(idx)]
+                return self._send(json.dumps({"folders": fl, "total": len(idx)}),
+                                  "application/json")
+
             if u.path == "/api/session":
                 idx = csx.load(quiet=True)
                 e = csx.pick(idx, qs.get("id", ""))[0]

@@ -44,12 +44,29 @@ Read-only. It never writes to either tool's directory — its own index lives at
 | `-d` / `-g` | search message bodies / everything incl. tool calls + subagent runs |
 | `-s` | include subagent runs in the listing |
 | `--claude` / `--codex` | restrict to one tool |
-| `-p NAME` | filter by project or cwd |
+| `-p NAME` | substring match on project name or cwd |
+| `-i PATH` | only sessions whose cwd is PATH **or below it** (`-i ~/ABL`) |
+| `-H` | same, scoped to the directory you're standing in |
+| `--only` | with `-i`/`-H`: that folder exactly, ignore subfolders |
+| `--folders` | list every folder that has sessions, with counts |
 | `-n N` / `-a` | cap results / no cap |
 | `-f` | print full session ids instead of the 8-char prefix |
 | `-G REGEX` | with `show`: only print turns matching a regex |
 | `--no-pager` | never page (for piping into grep) |
 | `-R` | force a reindex |
+
+### Scoping to one folder
+
+`~/ABL` and `~/ABL/abl-platform` are different working folders, and most sessions
+live in the latter. To see only the ones you ran from `~/ABL` itself:
+
+```bash
+csx --folders             # what folders exist, and how many sessions each holds
+csx -i ~/ABL              # ~/ABL and everything under it   → 330 sessions
+csx -i ~/ABL --only       # ~/ABL exactly, no subfolders     → 21 sessions
+csx -H                    # whatever directory you're in right now
+csx -i ~/ABL --only -d OOM   # scoping also makes search faster — less to read
+```
 
 A bare `csx some words` searches titles; if nothing matches it falls back to a
 body search automatically, so you rarely have to pick a flag.
@@ -63,6 +80,8 @@ port, `--no-open` to skip the browser).
 - **Click the id** → copies the raw session id
 - **Double-click** → full transcript, with the resume command as a copy chip
 - Search in **Titles / Messages / Everything**, filter by tool, toggle subagent runs
+- **Folder dropdown** lists every working folder with its session count; the
+  **+ subfolders** checkbox switches between subtree and exact-folder scope
 - Theme: Auto / Light / Dark, remembered in `localStorage`
 - `/` focuses search, `Esc` closes the transcript
 
@@ -98,6 +117,7 @@ the listing still shows each segment on its own date.
 ## Ideas / not done yet
 
 - Date-range filter (`--since 2026-07-01`)
+- Remember the last folder/tool/mode selection in the UI
 - Export a session to Markdown
 - Search `~/.claude/history.jsonl` (every prompt typed, including sessions since deleted)
 - Stats view: sessions per day, tokens, which projects eat the time
