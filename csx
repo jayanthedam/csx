@@ -391,7 +391,7 @@ def folders(idx):
         deep = sum(v for c, v in own.items()
                    if c != NO_CWD and (c == root or c.startswith(root + os.sep)))
         out.append((root, n, deep))
-    return sorted(out, key=lambda r: (r[0] == NO_CWD, -r[2], r[0]))
+    return sorted(out, key=lambda r: (r[0] == NO_CWD, -r[1], r[0]))
 
 
 def pick(idx, ident):
@@ -539,15 +539,11 @@ def main():
         rows = folders(idx)   # honors --codex/--claude/-s/-p already applied
         if root:
             rows = [r for r in rows if in_tree(r[0], root, True)]
-        emit(f"{C['dim']}{'here':>6} {'+sub':>6}  folder{C['r']}")
-        for cwd, own, deep in rows:
-            sub = f"{C['dim']}{deep - own:>6}{C['r']}" if deep > own else f"{C['dim']}{'-':>6}{C['r']}"
-            emit(f"{C['c']}{own:>6}{C['r']} {sub}  {cwd}")
+        for cwd, own, _ in rows:
+            emit(f"{C['c']}{own:>6}{C['r']}  {cwd}")
         total = sum(o for _, o, _ in rows)
-        emit(f"{C['dim']}{len(rows)} folder(s), {total} session(s) — each counted once, "
-             f"under the folder it actually ran in.{C['r']}")
-        emit(f"{C['dim']}`csx -i <path>` shows the 'here' count; add --sub to include "
-             f"the subfolder count too.{C['r']}")
+        emit(f"{C['dim']}{len(rows)} folder(s), {total} session(s) · "
+             f"scope one with `csx -i <path>`{C['r']}")
         return flush()
 
     limit = 10 ** 6 if (a.all or a.limit is None) else a.limit

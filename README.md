@@ -80,10 +80,9 @@ port, `--no-open` to skip the browser).
 - **Click the id** → copies the raw session id
 - **Double-click** → full transcript, with the resume command as a copy chip
 - Search in **Titles / Messages / Everything**, filter by tool, toggle subagent runs
-- **Folder dropdown** lists every working folder with its own session count.
-  Picking one shows exactly that count — nested folders are opt-in via
-  **+ subfolders**, because a picker that returns 331 rows when you clicked
-  "21 here" is just wrong
+- **Folder dropdown** — each folder and how many sessions ran in it
+  (`~/ABL — 21 sessions`). Picking one shows exactly that count; nested folders
+  are opt-in via **+ subfolders**
 - Theme: Auto / Light / Dark, remembered in `localStorage`
 - `/` focuses search, `Esc` closes the transcript
 
@@ -112,11 +111,9 @@ nothing, so nothing short-circuits) is ~2.2s.
 A thread pool made this **slower** (10.6s), not faster: it's CPU-bound regex under
 the GIL, not I/O. Left single-threaded on purpose.
 
-**Folder counts.** `--folders` prints two numbers: sessions that ran *in* that
-folder, and how many more live *below* it. A parent's subtree count deliberately
-includes its children — `~/ABL` covers `~/ABL/abl-platform` — so the two columns
-are shown separately and every session is counted exactly once in the "here"
-column. Three things that quietly go wrong here and are covered by `tests.py`:
+**Folder counts.** One number per folder: sessions that ran in it, counted once,
+ranked by that number. A parent does not absorb its children's sessions unless
+you ask (`--sub`). Three things that quietly go wrong here and are covered by `tests.py`:
 
 - **Sibling prefixes.** `~/ABL/abl-platform` must not swallow `-deploy`, `-infra`,
   `-2268` or `_worktrees`, all of which exist in this tree. The prefix check is

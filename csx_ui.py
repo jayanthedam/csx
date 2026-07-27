@@ -169,7 +169,7 @@ async function load(){
   const what = mode==="title" ? "titles" : (mode==="deep" ? "messages" : "everything");
   const f = $("#folder"), scope = f.value
     ? ` in ${f.options[f.selectedIndex].text.split(" — ")[0]}` +
-      ($("#subdirs").checked ? " and its subfolders" : " only") : ``;
+      ($("#subdirs").checked ? " + subfolders" : "") : ``;
   $("#hint").textContent =
     `${d.rows.length}${d.partial?"+ (showing first 80)":(q?" matching":"")} of ${d.total} sessions${scope}` +
     (q?` · searched ${what} in ${(d.ms/1000).toFixed(1)}s`:``) +
@@ -234,8 +234,7 @@ async function loadFolders(){
   const d = await (await fetch("/api/folders")).json();
   const sel = $("#folder");
   sel.innerHTML = `<option value="">All folders (${d.total} sessions)</option>` +
-    d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.own} here` +
-      (f.deep > f.own ? ` (+${f.deep - f.own} in subfolders)` : ``) + `</option>`).join("");
+    d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.own} session${f.own==1?"":"s"}</option>`).join("");
 }
 loadFolders();
 $("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, mode==="title"?120:450); };
