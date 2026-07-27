@@ -7,6 +7,7 @@ import html as _html
 import json
 import os
 import re
+import shlex
 import socket
 import threading
 import webbrowser
@@ -36,7 +37,7 @@ button.on{border-color:var(--acc);color:var(--acc)}
 select{max-width:170px}
 .hint{color:var(--dim);font-size:12px;padding-top:6px}
 main{padding:6px 0 40px}
-.row{display:grid;grid-template-columns:72px 88px 122px 68px 148px 1fr 86px;gap:10px;align-items:baseline;
+.row{display:grid;grid-template-columns:72px 88px 122px 60px 132px 110px 1fr 132px;gap:9px;align-items:baseline;
   padding:6px 14px;border-bottom:1px solid var(--line);cursor:pointer}
 .row:hover{background:var(--card)}
 .tag{font-size:10.5px;font-weight:700;letter-spacing:.03em;text-align:center;border-radius:999px;
@@ -55,6 +56,7 @@ main{padding:6px 0 40px}
 #day b{color:var(--fg)}
 .proj{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.branch{color:var(--dim);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hits{padding:2px 14px 8px 184px;color:var(--dim);font-size:12px}
 .hits b{color:var(--fg);opacity:.65;font-weight:600}
 .empty{padding:40px 14px;color:var(--dim);text-align:center}
@@ -195,8 +197,10 @@ async function load(){
       <span class="when" title="${e.full_when}">${e.when}</span>
       <span class="turns">${e.turns} msgs</span>
       <span class="proj" title="${esc(e.cwd)}">${esc(e.proj)}</span>
+      <span class="branch" title="git branch">${esc(e.branch || "")}</span>
       <span class="title">${mark(e.title||"(no message text)", q)}</span>
-      <span class="act">${e.cmd ? `<button class="go" data-id="${e.id}" title="Open a terminal already resumed in this session">▶ Resume</button> <button class="cp">⧉ Copy</button>` : `<span class="gone">session gone</span>`}</span>
+      <span class="act">${e.cmd ? `<button class="go" data-id="${e.id}" title="Open a terminal already resumed in this session">▶ Resume</button>` +
+        (e.forkable ? ` <button class="fork" data-id="${e.id}" title="Resume as a new branch of this session (--fork-session), leaving the original untouched">⑂ Fork</button>` : ``) : `<span class="gone">session gone</span>`}</span>
     </div>` + (e.hits && e.hits.length ? `<div class="hits">` +
       e.hits.map(h=>`<div><b>${h[0]}</b> <span class="when">${h[1]}</span> …${mark(h[2], q)}…</div>`).join("") + `</div>` : "")
   ).join("");
@@ -213,6 +217,8 @@ async function load(){
 $("#list").addEventListener("click", e => {
   const go = e.target.closest(".go");
   if (go){ launch(go.dataset.id); e.stopPropagation(); return; }
+  const fk = e.target.closest(".fork");
+  if (fk){ launch(fk.dataset.id, true); e.stopPropagation(); return; }
   const idc = e.target.closest(".id");
   if (idc){ copy(idc.dataset.copy, "id"); e.stopPropagation(); return; }
   const row = e.target.closest(".row");
@@ -220,11 +226,12 @@ $("#list").addEventListener("click", e => {
             copy(row.dataset.cmd, "resume command"); }
 });
 
-async function launch(id){
-  toast("opening terminal…");
+async function launch(id, fork){
+  toast(fork ? "forking…" : "opening terminal…");
   try {
-    const d = await (await fetch("/api/launch?id=" + encodeURIComponent(id))).json();
-    toast(d.ok ? `resumed in ${d.terminal}` : `couldn't launch: ${d.error}`);
+    const d = await (await fetch("/api/launch?id=" + encodeURIComponent(id) +
+                                 (fork ? "&fork=1" : ""))).json();
+    toast(d.ok ? `${fork ? "forked" : "resumed"} in ${d.terminal}` : `couldn't launch: ${d.error}`);
   } catch(e){ toast("launch failed: " + e.message); }
 }
 
@@ -439,7 +446,7 @@ def build(csx):
     """Return a request handler bound to the csx module (avoids a circular import)."""
 
     def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=False, day=""):
-        idx = csx.load(quiet=True)
+        idx = [e for e in csx.load(quiet=True) if e.get("turns")]
         if day:
             idx = [e for e in idx if csx.day_of(e) == day]
         if folder:
@@ -451,7 +458,10 @@ def build(csx):
         elif src == "claude":
             idx = [e for e in idx if e.get("src") != "codex"]
 
-        terms = [t for t in q.split() if t]
+        try:
+            terms = [t for t in shlex.split(q) if t]
+        except ValueError:
+            terms = [t for t in q.split() if t]
         out = []
         if not terms:
             sel = idx
@@ -483,9 +493,11 @@ def build(csx):
                              + f"  ({csx.ago(e['mtime'])} ago)",
                 "turns": e["turns"],
                 "proj": csx.proj(e),
+                "branch": e.get("branch") or "",
                 "cwd": e.get("cwd") or "",
                 "title": e["title"],
                 "cmd": csx.resume_cmd(e),
+                "forkable": e.get("src") != "codex",
                 "hits": e.get("_hits", []),
             })
         return out, len(sel)
@@ -586,7 +598,7 @@ def build(csx):
                     "application/json")
 
             if u.path == "/api/launch":
-                import shlex, subprocess
+                import subprocess
                 idx = csx.load(quiet=True)
                 e = csx.pick(idx, qs.get("id", ""))[0]
                 if e.get("kind") == "sub":
@@ -594,9 +606,10 @@ def build(csx):
                     if par:
                         e = par[0]
                 # built only from indexed values, never from page input
+                fork = qs.get("fork") == "1" and e.get("src") != "codex"
                 sh = (f"cd {shlex.quote(e.get('cwd') or os.path.expanduser('~'))} && "
                       f"exec {'codex resume' if e.get('src') == 'codex' else 'claude --resume'} "
-                      f"{shlex.quote(e['id'])}")
+                      f"{shlex.quote(e['id'])}" + (" --fork-session" if fork else ""))
                 argv, term = csx.terminal_argv(sh)
                 if qs.get("dry") == "1":          # inspect the command without running it
                     return self._send(json.dumps({"ok": True, "dry": True,

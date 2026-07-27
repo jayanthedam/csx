@@ -11,6 +11,7 @@
 Index cached at ~/.claude/.csx-index.json, refreshed by mtime+size.
 """
 import argparse
+import shlex
 import datetime as dt
 import json
 import os
@@ -23,7 +24,7 @@ CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
 HISTORY = os.path.expanduser("~/.claude/history.jsonl")
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
-CACHE_V = 7
+CACHE_V = 8
 
 C = {"dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
      "y": "\033[33m", "c": "\033[36m", "g": "\033[32m", "m": "\033[35m"}
@@ -75,6 +76,11 @@ def _claude_msgs(path, meta):
                     parts.append(x.get("text", ""))
                 elif meta and x.get("type") == "tool_use":
                     parts.append(f"[tool:{x.get('name')}] " + json.dumps(x.get("input", ""))[:400])
+                elif meta and x.get("type") == "tool_result":
+                    body = x.get("content")
+                    if isinstance(body, list):
+                        body = " ".join(b.get("text", "") for b in body if isinstance(b, dict))
+                    parts.append("[result] " + str(body)[:800])
             c = "\n".join(parts)
         if isinstance(c, str) and c.strip():
             yield d["type"], d.get("timestamp", ""), c
@@ -98,6 +104,11 @@ def _codex_msgs(path, meta):
         elif meta and t in ("function_call", "custom_tool_call"):
             arg = p.get("arguments") or p.get("input") or ""
             yield "assistant", ts, f"[tool:{p.get('name', t)}] {str(arg)[:400]}"
+        elif meta and t in ("function_call_output", "custom_tool_call_output"):
+            out = p.get("output")
+            if isinstance(out, dict):
+                out = out.get("content") or out.get("text") or out
+            yield "assistant", ts, "[result] " + str(out)[:800]
 
 
 def msgs(entry_or_path, meta=False):
@@ -167,11 +178,11 @@ def head(path, src):
 def profile(path, src):
     """One read per file: message count, first/last timestamp, cwd, id, title."""
     n = 0
-    first = last = cwd = sid = named = renamed = first_msg = ""
+    first = last = cwd = sid = named = renamed = first_msg = branch = ""
     try:
         fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
-        return 0, "", "", "", "", ""
+        return 0, "", "", "", "", "", ""
     with fh:
         for line in fh:
             try:
@@ -179,6 +190,8 @@ def profile(path, src):
             except Exception:
                 continue
             t = d.get("type")
+            if d.get("gitBranch"):
+                branch = d["gitBranch"]
             if not cwd:
                 cwd = d.get("cwd") or (d.get("payload", {}) or {}).get("cwd", "") \
                     if isinstance(d.get("payload"), dict) or d.get("cwd") else ""
@@ -214,7 +227,7 @@ def profile(path, src):
                     last = ts
                 if role == "user" and not first_msg and not is_noise(text):
                     first_msg = " ".join(text.split())[:160]
-    return n, first, last, cwd, sid, (renamed or named or first_msg)
+    return n, first, last, cwd, sid, (renamed or named or first_msg), branch
 
 
 # ---------- parallelism ----------
@@ -310,7 +323,7 @@ def scan(quiet=False):
         profiles = {t[4]: profile(t[4], t[0]) for t in todo}
 
     for src, sub, dirpath, fn, p, st in todo:
-        n, first, last, cwd, sid, title = profiles[p]
+        n, first, last, cwd, sid, title, branch = profiles[p]
         if src == "codex":
             m = re.search(r"([0-9a-f]{8}-[0-9a-f-]{27,})", fn)
             ident = sid or (m.group(1) if m else fn[:-6])
@@ -323,6 +336,7 @@ def scan(quiet=False):
                 os.path.dirname(os.path.dirname(dirpath)) if sub else dirpath)
         e = {"path": p, "src": src}
         e.update({"id": ident, "kind": "sub" if sub else "main", "parent": parent,
+                  "branch": branch,
                   "project": project, "cwd": cwd, "mtime": st.st_mtime,
                   "size": st.st_size, "turns": n, "start": first, "end": last,
                   "title": title})
@@ -627,10 +641,11 @@ def pick(idx, ident):
     return hit
 
 
-def resume_cmd(e):
+def resume_cmd(e, fork=False):
     if e.get("src") == "codex":
         return f"cd {e.get('cwd') or '~'} && codex resume {e['id']}"
-    return f"cd {e.get('cwd') or '~'} && claude --resume {e['id']}"
+    return (f"cd {e.get('cwd') or '~'} && claude --resume {e['id']}"
+            + (" --fork-session" if fork else ""))
 
 
 def cmd_resume(idx, ident):
@@ -655,7 +670,8 @@ def cmd_show(idx, ident, meta, grep):
         return show_list(hit)
     e = hit[0]
     kind = "codex" if e.get("src") == "codex" else "claude"
-    emit(f"{C['b']}{e['id']}{C['r']} {C['dim']}[{kind}]{C['r']}  {e.get('cwd') or '?'}  "
+    emit(f"{C['b']}{e['id']}{C['r']} {C['dim']}[{kind}"
+         + (f" · {e['branch']}" if e.get("branch") else "") + f"]{C['r']}  {e.get('cwd') or '?'}  "
          f"{clock(e['start'])} → {clock(e['end'])}  {e['turns']} messages")
     emit(f"{C['dim']}resume: {resume_cmd(e)}{C['r']}")
     emit()
@@ -700,6 +716,9 @@ def main():
                     help="global search: titles + bodies + tool calls + subagent runs")
     ap.add_argument("-m", "--meta", action="store_true", help="include tool calls")
     ap.add_argument("-s", "--subagents", action="store_true", help="include subagent runs")
+    ap.add_argument("-b", "--branch", help="only sessions on this git branch")
+    ap.add_argument("--empty", action="store_true",
+                    help="include sessions with no messages (hidden by default)")
     ap.add_argument("--codex", action="store_true", help="only Codex sessions")
     ap.add_argument("--claude", action="store_true", help="only Claude Code sessions")
     ap.add_argument("-p", "--project", help="substring filter on project / cwd")
@@ -748,6 +767,10 @@ def main():
         return flush()
 
     idx = load(a.rescan)
+    if not a.empty:
+        idx = [e for e in idx if e.get("turns")]
+    if a.branch:
+        idx = [e for e in idx if a.branch.lower() in (e.get("branch") or "").lower()]
     if not (a.subagents or a.glob):
         idx = [e for e in idx if e.get("kind") != "sub"]
     if a.codex:

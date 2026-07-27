@@ -43,6 +43,8 @@ Read-only. It never writes to either tool's directory — its own index lives at
 |---|---|
 | `-d` / `-g` | search message bodies / everything incl. tool calls + subagent runs |
 | `-s` | include subagent runs in the listing |
+| `-b BRANCH` | only sessions on that git branch |
+| `--empty` | include sessions with no messages (hidden by default) |
 | `--claude` / `--codex` | restrict to one tool |
 | `-p NAME` | substring match on project name or cwd |
 | `-i PATH` | only sessions run in PATH **itself** (`-i ~/ABL`) |
@@ -135,6 +137,28 @@ xterm). The command is assembled from indexed values and shell-quoted — the pa
 sends only a session id, never a command string. The server binds to
 `127.0.0.1`, so nothing off-machine can reach it. `?dry=1` returns the argv
 without running it.
+
+## Borrowed from the neighbours
+
+Other tools exist for this — [claude-history](https://github.com/raine/claude-history),
+[claude-session-manager-tui](https://github.com/borball/claude-session-manager-tui),
+[claude-code-log](https://github.com/daaain/claude-code-log). Reading them was
+worth it; four things came back:
+
+- **Git branch** per session (as Claude Code's own picker shows). A column in
+  both UIs, `-b` to filter. 196 of 403 sessions have one; Codex records none.
+- **Tool *results*, not just tool calls.** `-g` used to index what the agent
+  ran, not what came back. Searching `ERR_PNPM` found 2 sessions before and
+  **42** after — error text and command output live in results.
+- **Fork.** `⑂ Fork` / `^o` resumes with `--fork-session`, branching the
+  conversation and leaving the original untouched.
+- **Skip empty sessions.** 13 sessions have no messages at all; they were pure
+  noise in the list. Hidden unless `--empty`.
+
+Not taken: AI-generated summaries (Claude Code's own `ai-title` already fills
+that role, free) and semantic search (needs a local embedding model and an
+embedding store — a real dependency, and lexical + the prompt log has found
+everything so far).
 
 ## Design notes
 

@@ -8,10 +8,11 @@ Launched by `csx tui`. Stdlib curses only.
 """
 import curses
 import os
+import shlex
 import sys
 
 KEYS = [
-    ("enter", "resume"), ("^r", "read"), ("^d", "deep"), ("^g", "global"),
+    ("enter", "resume"), ("^o", "fork"), ("^r", "read"), ("^d", "deep"), ("^g", "global"),
     ("^p", "prompts"), ("^y", "today"), ("^f", "pick folder"), ("tab", "tool"),
     ("^u", "clear"), ("^n/^k", "move"), ("esc", "quit"),
 ]
@@ -21,7 +22,7 @@ HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
 class Tui:
     def __init__(self, csx, idx):
         self.csx = csx
-        self.all = [e for e in idx if e.get("kind") != "sub"]
+        self.all = [e for e in idx if e.get("kind") != "sub" and e.get("turns")]
         self.q = ""
         self.mode = "title"          # title | deep | global | prompts
         self.src = ""                # "" | claude | codex
@@ -54,10 +55,16 @@ class Tui:
             out = [e for e in out if self.csx.day_of(e) == today]
         return out
 
+    def terms(self):
+        try:
+            return [t for t in shlex.split(self.q) if t]
+        except ValueError:
+            return self.q.split()
+
     def refilter(self):
         """Title filtering is instant, so it runs on every keystroke."""
         idx = self.scope()
-        terms = self.q.lower().split()
+        terms = [t.lower() for t in self.terms()]
         if terms and self.mode == "title":
             idx = [e for e in idx
                    if all(t in (e["title"] + " " + e.get("cwd", "")).lower() for t in terms)]
@@ -76,7 +83,7 @@ class Tui:
         if mode == "prompts":
             by_id = {e["id"]: e for e in self.all}
             rows = []
-            for h in self.csx.prompt_log(self.q.split(), 200):
+            for h in self.csx.prompt_log(self.terms(), 200):
                 e = by_id.get(h["session"])
                 # the prompt IS the result — show it, keep the session for resume
                 rows.append((dict(e, title=h["text"]), None) if e else
@@ -87,7 +94,7 @@ class Tui:
             self.rows = rows
         else:
             found = []
-            for e, hits in self.csx.search(self.scope(), self.q.split(),
+            for e, hits in self.csx.search(self.scope(), self.terms(),
                                            ctx=90, meta=(mode == "global"), per=2):
                 found.append((e, hits))
                 if len(found) >= 200:
@@ -131,7 +138,7 @@ class Tui:
     def current(self):
         return self.rows[self.sel][0] if self.rows else None
 
-    def resume(self):
+    def resume(self, fork=False):
         e = self.current()
         if not e or e.get("kind") == "gone":
             self.note = "that prompt's session is gone — nothing to resume"
@@ -140,7 +147,7 @@ class Tui:
         if os.path.isdir(cwd):
             os.chdir(cwd)
         argv = (["codex", "resume", e["id"]] if e.get("src") == "codex"
-                else ["claude", "--resume", e["id"]])
+                else ["claude", "--resume", e["id"]] + (["--fork-session"] if fork else []))
         curses.endwin()
         print(f"\n→ {' '.join(argv)}   ({cwd})\n", flush=True)
         os.execvp(argv[0], argv)          # this process becomes the session
@@ -190,7 +197,7 @@ class Tui:
             scr.addnstr(y, 0, (" " + self.day_line()).ljust(w - 1), w - 1,
                         curses.A_BOLD | dim)
             y += 1
-        scr.addnstr(y, 0, "  TOOL    WHEN            MSGS FOLDER           TITLE"
+        scr.addnstr(y, 0, "  TOOL    WHEN            MSGS FOLDER           BRANCH       TITLE"
                     .ljust(w - 1), w - 1, curses.A_UNDERLINE | dim)
         y += 1
 
@@ -211,7 +218,7 @@ class Tui:
                     .strftime("%b %d %I:%M%p").replace(" 0", " ").lower()
                     if e.get("mtime") else "")
             left = (f"{'▸' if on else ' '} {tag:<7} {when:<15} {e['turns']:>4} "
-                    f"{self.csx.proj(e)[:16]:<16} ")
+                    f"{self.csx.proj(e)[:16]:<16} {(e.get('branch') or '')[:12]:<12} ")
             row = (left + e["title"])[:w - 1]
             scr.addnstr(y, 0, row.ljust(w - 1), w - 1,
                         (sel_c | curses.A_BOLD) if on else tool_c.get(tag, 0))
@@ -280,7 +287,8 @@ class Tui:
         h, w = scr.getmaxyx()
         dim = curses.color_pair(1)
         title = (f" {e['title']}  ·  {self.csx.proj(e)}  ·  {e['turns']} messages"
-                 f"  ·  {self.csx.clock(e['start'])} → {self.csx.clock(e['end'])}")
+                 + (f"  ·  {e['branch']}" if e.get("branch") else "")
+                 + f"  ·  {self.csx.clock(e['start'])} → {self.csx.clock(e['end'])}")
         scr.addnstr(0, 0, title.ljust(w - 1), w - 1, curses.A_BOLD)
         body_h = h - 2
         for i in range(body_h):
@@ -358,6 +366,8 @@ class Tui:
                 self.resume()
             elif ch == "\x12":                       # ^r
                 self.open_reader()
+            elif ch == "\x0f":                       # ^o fork
+                self.resume(fork=True)
             elif ch == "\x04":                       # ^d
                 self.run_search("deep", scr)
             elif ch == "\x07":                       # ^g
