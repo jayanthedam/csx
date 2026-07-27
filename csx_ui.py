@@ -45,8 +45,14 @@ main{padding:6px 0 40px}
 .id{color:var(--dim);cursor:copy}
 .id:hover{color:var(--acc);text-decoration:underline}
 .when,.turns,.proj{color:var(--dim);font-size:12px}
-.act{opacity:0;text-align:right;color:var(--acc);font-size:11.5px;white-space:nowrap}
-.row:hover .act{opacity:1}
+.act{opacity:0;text-align:right;white-space:nowrap}
+.row:hover .act,.row.sel .act{opacity:1}
+.act button{padding:1px 7px;font-size:11px;border-radius:5px;line-height:1.5}
+.row.sel{background:var(--card);box-shadow:inset 3px 0 0 var(--acc)}
+.gone{color:var(--sa);font-style:italic}
+#day{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--dim);font-size:12.5px;display:none}
+#day.on{display:block}
+#day b{color:var(--fg)}
 .proj{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hits{padding:2px 14px 8px 184px;color:var(--dim);font-size:12px}
@@ -97,6 +103,8 @@ mark{background:var(--hl);color:inherit}
     <button id="mTitle" class="on" title="Match the session title only — instant">Titles</button>
     <button id="mDeep" title="Match anything you or the agent said">Messages</button>
     <button id="mGlob" title="Messages + tool calls + subagent runs">Everything</button>
+    <button id="mPrompt" title="Every prompt you have typed, even from deleted sessions">Prompts</button>
+    <button id="today" title="Only sessions you touched today">Today</button>
     <select id="folder" title="Limit to one working folder">
       <option value="">All folders</option></select>
     <label style="color:var(--dim)" title="Include sessions from folders nested inside the one you picked">
@@ -108,8 +116,9 @@ mark{background:var(--hl);color:inherit}
       <input type="checkbox" id="subs"> include subagent runs</label>
     <button id="theme" title="Switch between light, dark and system theme">Theme: Auto</button>
   </div>
-  <div class="hint" id="hint">Click a row to copy its resume command · double-click to read the transcript</div>
+  <div class="hint" id="hint">↑↓ move · Enter read · <b>o</b> open in terminal · <b>y</b> copy · / search</div>
 </header>
+<div id="day"></div>
 <main id="list"></main>
 <div id="toast"></div>
 <div id="panel"><div id="phead"></div><div id="pbody"></div></div>
@@ -164,8 +173,11 @@ function mark(s, q){
 
 async function load(){
   const q = $("#q").value.trim();
+  const day = todayOn ? new Date().toLocaleDateString("en-CA") : "";
   const p = new URLSearchParams({q, mode, src: $("#src").value, subs: $("#subs").checked ? "1":"0",
-                                 folder: $("#folder").value, subdirs: $("#subdirs").checked ? "1":"0"});
+                                 folder: $("#folder").value,
+                                 subdirs: $("#subdirs").checked ? "1":"0", day});
+  dayStrip(day);
   $("#hint").textContent = "searching…";
   const r = await fetch("/api/list?"+p);
   const d = await r.json();
@@ -184,7 +196,7 @@ async function load(){
       <span class="turns">${e.turns} msgs</span>
       <span class="proj" title="${esc(e.cwd)}">${esc(e.proj)}</span>
       <span class="title">${mark(e.title||"(no message text)", q)}</span>
-      <span class="act">copy resume ⧉</span>
+      <span class="act">${e.cmd ? `<button class="go" data-id="${e.id}" title="Open a terminal already resumed in this session">▶ Resume</button> <button class="cp">⧉ Copy</button>` : `<span class="gone">session gone</span>`}</span>
     </div>` + (e.hits && e.hits.length ? `<div class="hits">` +
       e.hits.map(h=>`<div><b>${h[0]}</b> <span class="when">${h[1]}</span> …${mark(h[2], q)}…</div>`).join("") + `</div>` : "")
   ).join("");
@@ -199,11 +211,34 @@ async function load(){
 }
 
 $("#list").addEventListener("click", e => {
+  const go = e.target.closest(".go");
+  if (go){ launch(go.dataset.id); e.stopPropagation(); return; }
   const idc = e.target.closest(".id");
   if (idc){ copy(idc.dataset.copy, "id"); e.stopPropagation(); return; }
   const row = e.target.closest(".row");
-  if (row) copy(row.dataset.cmd, "resume command");
+  if (row){ select([...document.querySelectorAll(".row")].indexOf(row));
+            copy(row.dataset.cmd, "resume command"); }
 });
+
+async function launch(id){
+  toast("opening terminal…");
+  try {
+    const d = await (await fetch("/api/launch?id=" + encodeURIComponent(id))).json();
+    toast(d.ok ? `resumed in ${d.terminal}` : `couldn't launch: ${d.error}`);
+  } catch(e){ toast("launch failed: " + e.message); }
+}
+
+// --- keyboard: j/k move, Enter read, y copy, o open terminal ---
+let sel = -1;
+function rows(){ return [...document.querySelectorAll(".row")]; }
+function select(i){
+  const r = rows(); if (!r.length) return;
+  sel = Math.max(0, Math.min(i, r.length - 1));
+  r.forEach(x => x.classList.remove("sel"));
+  const el = r[sel]; el.classList.add("sel");
+  const b = el.getBoundingClientRect();
+  if (b.top < 90 || b.bottom > innerHeight) el.scrollIntoView({block:"center"});
+}
 $("#list").addEventListener("dblclick", e => {
   const row = e.target.closest(".row");
   if (row) open_session(row.dataset.id);
@@ -304,8 +339,25 @@ function paint(){
 function closePanel(){ $("#panel").classList.remove("open");
 }
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") closePanel();
-  if (e.key === "/" && document.activeElement !== $("#q")) { e.preventDefault(); $("#q").focus(); }
+  if (e.key === "Escape"){ closePanel(); $("#q").blur(); return; }
+  const typing = document.activeElement === $("#q");
+  if (e.key === "/" && !typing){ e.preventDefault(); $("#q").focus(); return; }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if ($("#panel").classList.contains("open")) return;
+  // arrows + Enter work even while the search box has focus (it autofocuses);
+  // the letter shortcuts only when you are not typing
+  const nav = ["ArrowDown", "ArrowUp", "Enter"].includes(e.key);
+  if (typing && !nav) return;
+  const r = rows();
+  if (e.key === "j" || e.key === "ArrowDown"){ e.preventDefault(); select(sel + 1); }
+  else if (e.key === "k" || e.key === "ArrowUp"){ e.preventDefault(); select(sel - 1); }
+  else if (e.key === "g"){ select(0); }
+  else if (e.key === "G"){ select(rows().length - 1); }
+  else if (sel >= 0 && r[sel]){
+    if (e.key === "Enter"){ e.preventDefault(); open_session(r[sel].dataset.id); }
+    else if (e.key === "y"){ copy(r[sel].dataset.cmd, "resume command"); }
+    else if (e.key === "o"){ launch(r[sel].dataset.id); }
+  }
 });
 
 const THEMES = ["auto", "light", "dark"];
@@ -320,15 +372,55 @@ let theme = (() => { try { return localStorage.getItem("csx-theme") || "auto"; }
 applyTheme(theme);
 $("#theme").onclick = () => applyTheme(theme = THEMES[(THEMES.indexOf(theme) + 1) % 3]);
 
+let todayOn = false;
 function setMode(m){ mode = m;
-  [["title","#mTitle"],["deep","#mDeep"],["global","#mGlob"]].forEach(([k,s]) =>
-    $(s).classList.toggle("on", k===m));
-  load(); }
-$("#mTitle").onclick = () => setMode("title");
-$("#mDeep").onclick  = () => setMode("deep");
-$("#mGlob").onclick  = () => setMode("global");
-$("#src").onchange = load; $("#subs").onchange = load;
-$("#folder").onchange = load; $("#subdirs").onchange = load;
+  [["title","#mTitle"],["deep","#mDeep"],["global","#mGlob"],["prompts","#mPrompt"]]
+    .forEach(([k,s]) => $(s).classList.toggle("on", k===m));
+  save(); load(); }
+$("#mTitle").onclick  = () => setMode("title");
+$("#mDeep").onclick   = () => setMode("deep");
+$("#mGlob").onclick   = () => setMode("global");
+$("#mPrompt").onclick = () => setMode("prompts");
+$("#today").onclick = () => { todayOn = !todayOn;
+  $("#today").classList.toggle("on", todayOn); save(); load(); };
+const persist = ["#src","#subs","#folder","#subdirs"];
+persist.forEach(sel => { const el = $(sel); el.addEventListener("change", () => { save(); load(); }); });
+
+function save(){
+  try { localStorage.setItem("csx-prefs", JSON.stringify({
+    mode, todayOn, src: $("#src").value, subs: $("#subs").checked,
+    folder: $("#folder").value, subdirs: $("#subdirs").checked })); } catch(e){}
+}
+function restore(){
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem("csx-prefs") || "{}"); } catch(e){}
+  if (p.src) $("#src").value = p.src;
+  $("#subs").checked = !!p.subs; $("#subdirs").checked = !!p.subdirs;
+  todayOn = !!p.todayOn; $("#today").classList.toggle("on", todayOn);
+  if (p.mode) { mode = p.mode;
+    [["title","#mTitle"],["deep","#mDeep"],["global","#mGlob"],["prompts","#mPrompt"]]
+      .forEach(([k,s]) => $(s).classList.toggle("on", k===mode)); }
+  return p.folder || "";
+}
+
+// come back to the tab after a while -> refresh so the list is not stale
+let hiddenAt = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (hiddenAt && Date.now() - hiddenAt > 30000 &&
+           !$("#panel").classList.contains("open")) load();
+});
+
+async function dayStrip(day){
+  const el = $("#day");
+  if (!day){ el.classList.remove("on"); return; }
+  const d = await (await fetch("/api/day?day=" + day)).json();
+  el.classList.add("on");
+  el.innerHTML = d.count
+    ? `<b>Today</b> — ${d.count} session${d.count==1?"":"s"}, ${d.msgs} messages · ${esc(d.span)}` +
+      ` · ` + d.folders.map(f => `${esc(f[0])} <b>${f[1]}</b>`).join(" · ")
+    : `<b>Today</b> — nothing yet`;
+}
 
 async function loadFolders(){
   const d = await (await fetch("/api/folders")).json();
@@ -336,9 +428,9 @@ async function loadFolders(){
   sel.innerHTML = `<option value="">All folders (${d.total} sessions)</option>` +
     d.folders.map(f => `<option value="${esc(f.path)}">${esc(f.short)} — ${f.own} session${f.own==1?"":"s"}</option>`).join("");
 }
-loadFolders();
+const wantFolder = restore();
+loadFolders().then(() => { if (wantFolder) $("#folder").value = wantFolder; load(); });
 $("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, mode==="title"?120:450); };
-load();
 </script>
 """
 
@@ -346,8 +438,10 @@ load();
 def build(csx):
     """Return a request handler bound to the csx module (avoids a circular import)."""
 
-    def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=False):
+    def rows_for(q, mode, src, subs, limit=5000, hitcap=80, folder="", subdirs=False, day=""):
         idx = csx.load(quiet=True)
+        if day:
+            idx = [e for e in idx if csx.day_of(e) == day]
         if folder:
             idx = [e for e in idx if csx.in_tree(e.get("cwd"), folder, subdirs)]
         if not subs and mode != "global":
@@ -411,6 +505,58 @@ def build(csx):
             })
         return out, len(sel)
 
+    def prompt_rows(q):
+        terms = [t for t in q.split() if t]
+        hits = csx.prompt_log(terms) if terms else csx.prompt_log([], 200)
+        by_id = {e["id"]: e for e in csx.load(quiet=True)}
+        out = []
+        for h in hits:
+            e = by_id.get(h["session"])
+            when = csx.dt.datetime.fromtimestamp((h["ts"] or 0) / 1000)
+            out.append({
+                "id": h["session"] or "-",
+                "tag": "claude" if e else "gone",
+                "label": "Claude" if e else "no session",
+                "when": when.strftime("%b %d, %I:%M %p").replace(" 0", " "),
+                "full_when": when.strftime("%A %d %B %Y, %I:%M %p").replace(" 0", " "),
+                "turns": e["turns"] if e else 0,
+                "proj": os.path.basename((h["project"] or "").rstrip("/")) or "?",
+                "cwd": h["project"] or "",
+                "title": h["text"],
+                "cmd": csx.resume_cmd(e) if e else "",
+                "hits": [],
+            })
+        return out, len(out)
+
+    def day_summary(day):
+        idx = [e for e in csx.load(quiet=True)
+               if e.get("kind") != "sub" and csx.day_of(e) == day]
+        if not idx:
+            return {"count": 0}
+        stamps = []
+        for e in idx:
+            for k in ("start", "end"):
+                try:
+                    stamps.append(csx.dt.datetime.fromisoformat(
+                        e[k].replace("Z", "+00:00")).astimezone())
+                except Exception:
+                    pass
+        folders = {}
+        for e in idx:
+            f = csx.proj(e)
+            folders[f] = folders.get(f, 0) + 1
+        today = csx.dt.datetime.now().strftime("%Y-%m-%d")
+        stamps = [s for s in stamps if s.strftime("%Y-%m-%d") == day] or stamps
+        span = ""
+        if stamps:
+            lo, hi = min(stamps), max(stamps)
+            hrs = (hi - lo).total_seconds() / 3600
+            span = (f"{lo.strftime('%I:%M %p').lstrip('0')} → "
+                    f"{hi.strftime('%I:%M %p').lstrip('0')}  ({hrs:.1f}h span)")
+        return {"count": len(idx), "span": span, "isToday": day == today,
+                "msgs": sum(e["turns"] for e in idx),
+                "folders": sorted(folders.items(), key=lambda kv: -kv[1])[:6]}
+
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -432,15 +578,58 @@ def build(csx):
                 return self._send(PAGE, "text/html; charset=utf-8")
             if u.path == "/api/list":
                 t0 = csx.dt.datetime.now()
-                rows, total = rows_for(qs.get("q", ""), qs.get("mode", "title"),
+                mode = qs.get("mode", "title")
+                if mode == "prompts":
+                    rows, total = prompt_rows(qs.get("q", ""))
+                    ms = int((csx.dt.datetime.now() - t0).total_seconds() * 1000)
+                    return self._send(json.dumps({"rows": rows, "total": total,
+                                                  "ms": ms, "partial": False}),
+                                      "application/json")
+                rows, total = rows_for(qs.get("q", ""), mode,
                                        qs.get("src", ""), qs.get("subs") == "1",
                                        folder=qs.get("folder", ""),
-                                       subdirs=qs.get("subdirs", "0") == "1")
-                partial = qs.get("mode", "title") != "title" and total >= 80
+                                       subdirs=qs.get("subdirs", "0") == "1",
+                                       day=qs.get("day", ""))
+                partial = mode != "title" and total >= 80
                 ms = int((csx.dt.datetime.now() - t0).total_seconds() * 1000)
                 return self._send(json.dumps({"rows": rows, "total": total, "ms": ms,
                                               "partial": partial}),
                                   "application/json")
+            if u.path == "/api/day":
+                return self._send(json.dumps(day_summary(
+                    qs.get("day") or csx.dt.datetime.now().strftime("%Y-%m-%d"))),
+                    "application/json")
+
+            if u.path == "/api/launch":
+                import shlex, subprocess
+                idx = csx.load(quiet=True)
+                e = csx.pick(idx, qs.get("id", ""))[0]
+                if e.get("kind") == "sub":
+                    par = [x for x in idx if x["id"] == e["parent"]]
+                    if par:
+                        e = par[0]
+                # built only from indexed values, never from page input
+                sh = (f"cd {shlex.quote(e.get('cwd') or os.path.expanduser('~'))} && "
+                      f"exec {'codex resume' if e.get('src') == 'codex' else 'claude --resume'} "
+                      f"{shlex.quote(e['id'])}")
+                argv, term = csx.terminal_argv(sh)
+                if qs.get("dry") == "1":          # inspect the command without running it
+                    return self._send(json.dumps({"ok": True, "dry": True,
+                                                  "terminal": term, "argv": argv}),
+                                      "application/json")
+                if not argv:
+                    return self._send(json.dumps({"ok": False,
+                                                  "error": "no terminal emulator found"}),
+                                      "application/json")
+                try:
+                    subprocess.Popen(argv, start_new_session=True,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception as exc:
+                    return self._send(json.dumps({"ok": False, "error": str(exc)}),
+                                      "application/json")
+                return self._send(json.dumps({"ok": True, "terminal": term,
+                                              "id": e["id"]}), "application/json")
+
             if u.path == "/api/folders":
                 idx = [e for e in csx.load(quiet=True) if e.get("kind") != "sub"]
                 home = os.path.expanduser("~")

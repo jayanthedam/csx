@@ -86,12 +86,30 @@ port, `--no-open` to skip the browser).
 - **Folder dropdown** — each folder and how many sessions ran in it
   (`~/ABL — 21 sessions`). Picking one shows exactly that count; nested folders
   are opt-in via **+ subfolders**
-- Theme: Auto / Light / Dark, remembered in `localStorage`
-- `/` focuses search, `Esc` closes the transcript
+- **▶ Resume** on any row opens a new terminal already inside that session
+  (`claude --resume` / `codex resume`, in the right cwd). ⧉ Copy still copies
+  the command instead, if you'd rather paste it yourself
+- **Today** filters to sessions you touched today and shows a summary strip:
+  count, messages, first→last span, and which folders they were in
+- **Prompts** is a fourth search mode over `~/.claude/history.jsonl` — every
+  prompt you have typed (12k here), including ones whose session is gone
+- Keyboard: `↑↓`/`j`/`k` move, `Enter` reads, `o` opens a terminal, `y` copies,
+  `/` focuses search, `g`/`G` jump to top/bottom, `Esc` closes
+- Theme (Auto / Light / Dark) and your mode, folder and tool filters are
+  remembered between visits; the list refreshes when you return to the tab
 
 Clipboard writes are verified by reading back — but only when permission is already
 granted, so it never triggers a browser permission prompt. If a write fails, a
 pre-selected text box appears instead of a toast that lies about having copied.
+
+### Launching terminals
+
+`▶ Resume` posts to `/api/launch`, which spawns `ghostty -e bash -lc "cd <cwd> &&
+exec claude --resume <id>"` (falling back to kitty, wezterm, gnome-terminal,
+xterm). The command is assembled from indexed values and shell-quoted — the page
+sends only a session id, never a command string. The server binds to
+`127.0.0.1`, so nothing off-machine can reach it. `?dry=1` returns the argv
+without running it.
 
 ## Design notes
 
@@ -176,8 +194,7 @@ The live-index check asserts that, for every folder, the counts shown by
 
 ## Ideas / not done yet
 
-- Date-range filter (`--since 2026-07-01`)
-- Remember the last folder/tool/mode selection in the UI
+- Date-range filter (`--since 2026-07-01`), and a Today-like view for any past day
 - Export a session to Markdown
-- Search `~/.claude/history.jsonl` (every prompt typed, including sessions since deleted)
-- Stats view: sessions per day, tokens, which projects eat the time
+- `csx go <query>` — same one-step resume from the CLI
+- Trend view: sessions/day over weeks, not just today

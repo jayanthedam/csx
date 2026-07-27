@@ -21,6 +21,7 @@ import sys
 CLAUDE_ROOT = os.path.expanduser("~/.claude/projects")
 CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
+HISTORY = os.path.expanduser("~/.claude/history.jsonl")
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
 CACHE_V = 6
 
@@ -450,6 +451,57 @@ def folders(idx):
                    if c != NO_CWD and (c == root or c.startswith(root + os.sep)))
         out.append((root, n, deep))
     return sorted(out, key=lambda r: (r[0] == NO_CWD, -r[1], r[0]))
+
+
+TERMINALS = [
+    ("ghostty", lambda sh: ["ghostty", "-e", "bash", "-lc", sh]),
+    ("kitty", lambda sh: ["kitty", "bash", "-lc", sh]),
+    ("wezterm", lambda sh: ["wezterm", "start", "--", "bash", "-lc", sh]),
+    ("gnome-terminal", lambda sh: ["gnome-terminal", "--", "bash", "-lc", sh]),
+    ("xterm", lambda sh: ["xterm", "-e", "bash", "-lc", sh]),
+]
+
+
+def terminal_argv(shell_cmd):
+    """argv that opens shell_cmd in a new terminal window, or None if none found."""
+    import shutil
+    for name, build in TERMINALS:
+        if shutil.which(name):
+            return build(shell_cmd), name
+    return None, None
+
+
+def prompt_log(terms, limit=200):
+    """Search ~/.claude/history.jsonl — every prompt typed, including ones whose
+    session was since deleted or compacted away."""
+    pats = [t.lower() for t in terms]
+    out, seen = [], set()
+    try:
+        lines = open(HISTORY, encoding="utf-8", errors="ignore").readlines()
+    except OSError:
+        return out
+    for line in reversed(lines):                      # newest first
+        try:
+            d = json.loads(line)
+        except Exception:
+            continue
+        text = d.get("display") or ""
+        if not text or not all(p in text.lower() for p in pats):
+            continue
+        key = (d.get("sessionId"), " ".join(text.split())[:120])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"text": " ".join(text.split()), "ts": d.get("timestamp", 0),
+                    "project": d.get("project", ""), "session": d.get("sessionId", "")})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def day_of(e):
+    """The date a session was last active, as YYYY-MM-DD local."""
+    return dt.datetime.fromtimestamp(e["mtime"]).strftime("%Y-%m-%d")
 
 
 def pick(idx, ident):
