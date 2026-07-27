@@ -217,6 +217,53 @@ def profile(path, src):
     return n, first, last, cwd, sid, (renamed or named or first_msg)
 
 
+# ---------- parallelism ----------
+# Indexing and the search prefilter are CPU-bound (json.loads / bytes.lower over
+# ~1 GB). Threads made this SLOWER — the GIL serialises them. Processes don't
+# share it, so the work actually spreads across cores.
+
+WORKERS = int(os.environ.get("CSX_WORKERS") or max(1, min(6, (os.cpu_count() or 2) - 2)))
+_POOL = [None]
+
+
+def pool():
+    if _POOL[0] is None and WORKERS > 1:
+        try:
+            import multiprocessing as mp
+            _POOL[0] = mp.get_context("fork").Pool(WORKERS)
+        except Exception:
+            _POOL[0] = False
+    return _POOL[0] or None
+
+
+def _profile_job(args):
+    path, src = args
+    return path, profile(path, src)
+
+
+def _probe_job(args):
+    path, needles = args
+    return path, raw_hit(path, needles)
+
+
+def _scan_job(args):
+    """Prefilter AND extract snippets inside the worker — the parent used to do
+    the expensive parsing serially, which left 5 cores idle."""
+    path, src, needles, terms, ctx, meta, per = args
+    if not raw_hit(path, needles):
+        return path, None
+    pats = [re.compile(re.escape(t), re.I) for t in terms]
+    hits = []
+    for role, ts, text in msgs({"path": path, "src": src}, meta):
+        if all(p.search(text) for p in pats):
+            m = pats[0].search(text)
+            hits.append((role, ts, " ".join(
+                text[max(0, m.start() - ctx):m.start() + ctx].split())))
+            if len(hits) >= per:
+                break
+    return path, hits
+
+
 # ---------- index ----------
 
 def _files():
@@ -242,7 +289,7 @@ def scan(quiet=False):
         except Exception:
             old = {}
 
-    out, fresh = [], 0
+    out, todo = [], []
     for src, sub, dirpath, fn in _files():
         p = os.path.join(dirpath, fn)
         try:
@@ -253,8 +300,17 @@ def scan(quiet=False):
         if prev and prev.get("mtime") == st.st_mtime and prev.get("size") == st.st_size:
             out.append(prev)
             continue
-        fresh += 1
-        n, first, last, cwd, sid, title = profile(p, src)
+        todo.append((src, sub, dirpath, fn, p, st))
+
+    fresh = len(todo)
+    pl = pool() if fresh > 8 else None
+    if pl:
+        profiles = dict(pl.map(_profile_job, [(t[4], t[0]) for t in todo], chunksize=4))
+    else:
+        profiles = {t[4]: profile(t[4], t[0]) for t in todo}
+
+    for src, sub, dirpath, fn, p, st in todo:
+        n, first, last, cwd, sid, title = profiles[p]
         if src == "codex":
             m = re.search(r"([0-9a-f]{8}-[0-9a-f-]{27,})", fn)
             ident = sid or (m.group(1) if m else fn[:-6])
@@ -378,23 +434,78 @@ def raw_hit(path, needles):
     return all(n in blob for n in needles)
 
 
-def cmd_deep(idx, terms, limit, ctx, meta, per=4):
+DEBUG = bool(os.environ.get("CSX_DEBUG"))
+
+
+def tick(label, t0):
+    if DEBUG:
+        print(f"[csx] {label}: {(dt.datetime.now() - t0).total_seconds():.2f}s "
+              f"(workers={WORKERS})", file=sys.stderr)
+    return dt.datetime.now()
+
+
+def prefilter(idx, needles):
+    """Yield sessions that could match, newest-first. The expensive part, so it
+    runs across cores; lazy so callers can stop early."""
+    t0 = dt.datetime.now()
+    pl = pool() if len(idx) > 16 else None
+    if not pl:
+        for e in idx:
+            if raw_hit(e["path"], needles):
+                yield e
+        tick("prefilter (serial)", t0)
+        return
+    # imap would submit every task up front, so a caller that stops at N results
+    # still pays for the whole corpus. Feed it a window at a time instead: enough
+    # to keep 6 cores busy, small enough that early exit stays cheap.
+    window = WORKERS * 8
+    for i in range(0, len(idx), window):
+        batch = idx[i:i + window]
+        for e, (_, hit) in zip(batch, pl.map(_probe_job,
+                                             [(x["path"], needles) for x in batch],
+                                             chunksize=2)):
+            if hit:
+                yield e
+    tick("prefilter (parallel)", t0)
+
+
+def search(idx, terms, ctx=110, meta=False, per=4):
+    """Yield (entry, hits) newest-first. Each file is prefiltered and mined in a
+    worker; lazy in windows so stopping early stays cheap."""
+    t0 = dt.datetime.now()
     pats = [re.compile(re.escape(t), re.I) for t in terms]
     needles = [t.lower().encode("utf-8", "replace") for t in terms]
-    shown = 0
-    for e in idx:
-        if not raw_hit(e["path"], needles):
-            continue
-        hits = []
+
+    def finish(e, hits):
+        out = []
         if all(p.search(e["title"]) for p in pats):
-            hits.append(("ttl", clock(e.get("start") or ""), " ".join(e["title"].split())))
-        for role, ts, text in msgs(e, meta):
-            if all(p.search(text) for p in pats):
-                m = pats[0].search(text)
-                hits.append((role, clock(ts),
-                             " ".join(text[max(0, m.start() - ctx):m.start() + ctx].split())))
-        if not hits:
-            continue
+            out.append(("ttl", clock(e.get("start") or ""), " ".join(e["title"].split())))
+        out += [(r, clock(ts), sn) for r, ts, sn in (hits or [])]
+        return out
+
+    pl = pool() if len(idx) > 16 else None
+    if not pl:
+        for e in idx:
+            _, hits = _scan_job((e["path"], e.get("src", "claude"), needles,
+                                 terms, ctx, meta, per))
+            if hits:
+                yield e, finish(e, hits)
+        tick("search (serial)", t0)
+        return
+    window = WORKERS * 8
+    for i in range(0, len(idx), window):
+        batch = idx[i:i + window]
+        jobs = [(e["path"], e.get("src", "claude"), needles, terms, ctx, meta, per)
+                for e in batch]
+        for e, (_, hits) in zip(batch, pl.map(_scan_job, jobs, chunksize=2)):
+            if hits:
+                yield e, finish(e, hits)
+    tick("search (parallel)", t0)
+
+
+def cmd_deep(idx, terms, limit, ctx, meta, per=4):
+    shown = 0
+    for e, hits in search(idx, terms, ctx, meta, per):
         emit(row(e))
         agent = "codex " if e.get("src") == "codex" else "claude"
         for role, ts, s in hits[:per]:

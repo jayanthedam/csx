@@ -461,27 +461,12 @@ def build(csx):
                                         + e.get("cwd", "")).lower() for t in terms)]
         else:
             meta = mode == "global"
-            pats = [re.compile(re.escape(t), re.I) for t in terms]
-
-            needles = [t.lower().encode("utf-8", "replace") for t in terms]
             sel = []
-            for e in idx:
-                if not csx.raw_hit(e["path"], needles):
-                    continue
-                hits = []
-                agent = "Codex" if e.get("src") == "codex" else "Claude"
-                if all(p.search(e["title"]) for p in pats):
-                    hits.append(["Title", csx.clock(e.get("start") or ""), " ".join(e["title"].split())])
-                for role, ts, text in csx.msgs(e, meta):
-                    if all(p.search(text) for p in pats):
-                        m = pats[0].search(text)
-                        hits.append(["You" if role == "user" else agent, csx.clock(ts),
-                                     " ".join(text[max(0, m.start() - 100):m.start() + 140].split())])
-                    if len(hits) >= 3:
-                        break
-                if not hits:
-                    continue
-                sel.append(dict(e, _hits=hits))
+            for e, hits in csx.search(idx, terms, ctx=100, meta=meta, per=3):
+                sel.append(dict(e, _hits=[[("You" if r == "user" else
+                                            ("Title" if r == "ttl" else
+                                             ("Codex" if e.get("src") == "codex" else "Claude"))),
+                                           ts, sn] for r, ts, sn in hits]))
                 if len(sel) >= hitcap:
                     break
 
@@ -671,6 +656,7 @@ def serve(csx, port=8787, open_browser=True):
             continue
     else:
         raise SystemExit(f"no free port in {port}..{port + 19}")
+    csx.pool()          # fork workers before the server spawns threads
     url = f"http://127.0.0.1:{p}/"
     print(f"csx ui → {url}   (ctrl-c to stop)")
     if open_browser:

@@ -118,9 +118,35 @@ tool, cwd, project, first/last timestamp, message count, title). Entries are
 invalidated by `mtime` + `size`, so a rebuild only re-reads what changed — the
 day-to-day cost is ~0.2s. A full cold rebuild of ~800 files / 1.3 GB is ~14s.
 
-`json.loads` is ~60% of that. Gating it behind a raw-substring check made things
-*worse*: most Claude lines are genuinely `user`/`assistant` records, so the gate
-skips little while scanning every (sometimes 100 KB) line three more times.
+`json.loads` is ~60% of that, and 78 of every 98 MB sits in `user`/`assistant`
+records that genuinely have to be parsed — so the fix is spreading the work, not
+avoiding it. Indexing and search run on a `fork` process pool
+(`min(6, cores-2)`, override with `CSX_WORKERS`):
+
+| | serial | 6 workers |
+|---|---|---|
+| full rebuild (warm cache) | 15.8s | **6.2s** |
+| full rebuild (cold cache) | 30.6s | **8.4s** |
+| search, rare term, whole corpus | 5.7s | **3.5s** |
+| search, common term (stops at 80) | 1.4s | **0.7s** |
+| incremental start (nothing changed) | 0.15s | 0.15s |
+
+Threads were tried first and made it *slower* (10.6s vs 8.2s) — this is CPU-bound
+work under the GIL. Processes don't share it.
+
+Two things that mattered more than the pool itself:
+
+- **Mine in the worker, not the parent.** The first version only prefiltered in
+  parallel and parsed matches in the parent, leaving 5 cores idle during the
+  expensive half. Moving snippet extraction into the worker halved rare-term
+  search again (7.2s → 3.6s).
+- **Feed the pool in windows.** `imap` submits every task up front, so a search
+  that stops at 80 results still paid for the whole corpus — a common-term query
+  went from 1.85s to 3.52s. Batching `WORKERS * 8` at a time keeps cores busy
+  while early exit stays cheap.
+
+Gating `json.loads` behind a raw-substring check also made things *worse*: too
+few lines are skippable, and every large line gets scanned three extra times.
 
 **Titles.** Three sources, in order:
 
