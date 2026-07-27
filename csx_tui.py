@@ -19,6 +19,86 @@ KEYS = [
 HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
 
 
+def inline(text):
+    """Split a line into (text, style) runs: **bold**, `code`, *italic*."""
+    runs, buf, i = [], "", 0
+    while i < len(text):
+        two, one = text[i:i + 2], text[i]
+        if two == "**":
+            j = text.find("**", i + 2)
+            if j > 0:
+                runs.append((buf, "")); buf = ""
+                runs.append((text[i + 2:j], "b")); i = j + 2; continue
+        if one == "`":
+            j = text.find("`", i + 1)
+            if j > 0:
+                runs.append((buf, "")); buf = ""
+                runs.append((text[i + 1:j], "c")); i = j + 1; continue
+        if one == "*" and i + 1 < len(text) and text[i + 1] != " ":
+            j = text.find("*", i + 1)
+            if 0 < j and "\n" not in text[i:j]:
+                runs.append((buf, "")); buf = ""
+                runs.append((text[i + 1:j], "i")); i = j + 1; continue
+        buf += one
+        i += 1
+    runs.append((buf, ""))
+    return [(t, st) for t, st in runs if t]
+
+
+def wrap_runs(runs, width, indent=0):
+    """Word-wrap styled runs into screen lines, keeping styles."""
+    out, line, col = [], [], indent
+    for text, st in runs:
+        for word in text.split(" "):
+            if not word:
+                continue
+            if col + len(word) + (1 if line else 0) > width and line:
+                out.append(line)
+                line, col = [(" " * indent, "")] if indent else [], indent
+            sep = " " if line and line[-1][0] not in ("", " " * indent) else ""
+            line.append((sep + word, st))
+            col += len(word) + len(sep)
+    if line:
+        out.append(line)
+    return out or [[("", "")]]
+
+
+def render_md(blocks, width):
+    """[(role, ts, body)] -> [(style, [(text, style)])] ready to draw."""
+    lines, fence = [], False
+    for role, ts, body in blocks:
+        lines.append(("head", [(f"{role} · {ts}", "head")]))
+        for raw in body.splitlines() or [""]:
+            if raw.strip().startswith("```"):
+                fence = not fence
+                lang = raw.strip()[3:]
+                lines.append(("code", [(f"  ┌─ {lang}" if fence else "  └─", "dim")]))
+                continue
+            if fence:
+                lines.append(("code", [("  │ " + raw[:width - 4], "code")]))
+                continue
+            st = raw.lstrip()
+            if not st:
+                lines.append(("", [("", "")]))
+            elif st.startswith("#"):
+                text = st.lstrip("#").strip()
+                lines += [("h", l) for l in wrap_runs([(text, "b")], width)]
+            elif st.startswith(("- ", "* ", "+ ")):
+                lines += [("li", l) for l in
+                          wrap_runs([("• ", "dim")] + inline(st[2:]), width, indent=2)]
+            elif st[:2].rstrip(".)").isdigit() and st[1:3] in (". ", ") "):
+                lines += [("li", l) for l in wrap_runs(inline(st), width, indent=2)]
+            elif st.startswith("> "):
+                lines += [("q", l) for l in
+                          wrap_runs([("│ ", "dim")] + inline(st[2:]), width, indent=2)]
+            elif set(st) <= set("-*_") and len(st) >= 3:
+                lines.append(("hr", [("─" * min(width - 2, 60), "dim")]))
+            else:
+                lines += [("p", l) for l in wrap_runs(inline(raw), width)]
+        lines.append(("", [("", "")]))
+    return lines
+
+
 class Tui:
     def __init__(self, csx, idx):
         self.csx = csx
@@ -157,16 +237,11 @@ class Tui:
         if not e or e.get("kind") == "gone":
             return
         agent = "CODEX" if e.get("src") == "codex" else "CLAUDE"
-        lines = []
-        for role, ts, body in self.csx.msgs(e):
-            if role == "user" and self.csx.is_noise(body):
-                continue
-            lines.append(("head", f"{'YOU' if role == 'user' else agent} · "
-                                  f"{self.csx.clock(ts)}"))
-            for ln in body.splitlines() or [""]:
-                lines.append(("body", ln))
-            lines.append(("body", ""))
-        self.reader = [e, lines, 0]
+        blocks = [("YOU" if role == "user" else agent, self.csx.clock(ts), body)
+                  for role, ts, body in self.csx.msgs(e)
+                  if not (role == "user" and self.csx.is_noise(body))]
+        self.reader = {"e": e, "blocks": blocks, "off": 0, "lines": None,
+                       "width": 0, "raw": False}
 
     def picker_items(self):
         q = self.picker["q"].lower()
@@ -281,47 +356,77 @@ class Tui:
             self.picker["q"] += ch
             self.picker["sel"] = 0
 
+    def reader_lines(self, w):
+        r = self.reader
+        if r["lines"] is None or r["width"] != w:
+            if r["raw"]:
+                r["lines"] = [("p", [(ln, "")])
+                              for role, ts, body in r["blocks"]
+                              for ln in ([f"{role} · {ts}"] + body.splitlines() + [""])]
+            else:
+                r["lines"] = render_md(r["blocks"], w - 2)
+            r["width"] = w
+        return r["lines"]
+
     def draw_reader(self, scr):
-        e, lines, off = self.reader
+        r = self.reader
+        e, off = r["e"], r["off"]
         scr.erase()
         h, w = scr.getmaxyx()
         dim = curses.color_pair(1)
+        style = {"": 0, "b": curses.A_BOLD, "i": curses.A_UNDERLINE,
+                 "c": curses.color_pair(4), "code": curses.color_pair(4),
+                 "dim": dim, "head": curses.color_pair(2) | curses.A_BOLD}
         title = (f" {e['title']}  ·  {self.csx.proj(e)}  ·  {e['turns']} messages"
                  + (f"  ·  {e['branch']}" if e.get("branch") else "")
                  + f"  ·  {self.csx.clock(e['start'])} → {self.csx.clock(e['end'])}")
         scr.addnstr(0, 0, title.ljust(w - 1), w - 1, curses.A_BOLD)
+
+        lines = self.reader_lines(w)
         body_h = h - 2
         for i in range(body_h):
             if off + i >= len(lines):
                 break
-            kind, text = lines[off + i]
-            scr.addnstr(i + 1, 0, text[:w - 1],
-                        w - 1, curses.A_BOLD if kind == "head" else 0)
+            kind, runs = lines[off + i]
+            x = 1
+            for text, st in runs:
+                if x >= w - 1:
+                    break
+                attr = style.get(st, 0)
+                if kind == "h":
+                    attr |= curses.A_BOLD | curses.A_UNDERLINE
+                try:
+                    scr.addnstr(i + 1, x, text, w - 1 - x, attr)
+                except curses.error:
+                    pass
+                x += len(text)
         pct = int(100 * min(1.0, (off + body_h) / max(len(lines), 1)))
         scr.addnstr(h - 1, 0,
                     f" {pct:>3}% · ↑↓/pgup/pgdn scroll · g/G top/end · "
-                    f"enter resume · q back".ljust(w - 1), w - 1, dim)
+                    f"m raw/md · enter resume · q back".ljust(w - 1), w - 1, dim)
 
     # ---------- loop ----------
 
     def key_reader(self, ch):
-        e, lines, off = self.reader
-        h = self.h
-        page = max(1, h - 4)
+        r = self.reader
+        lines, off, page = r["lines"] or [], r["off"], max(1, self.h - 4)
         if ch in ("q", "\x1b"):
             self.reader = None
         elif ch in (curses.KEY_DOWN, "\x0e", "j"):
-            self.reader[2] = min(max(0, len(lines) - 2), off + 1)
+            r["off"] = min(max(0, len(lines) - 2), off + 1)
         elif ch in (curses.KEY_UP, "\x0b", "k"):
-            self.reader[2] = max(0, off - 1)
+            r["off"] = max(0, off - 1)
         elif ch in (curses.KEY_NPAGE, " ", "\x04"):
-            self.reader[2] = min(max(0, len(lines) - 2), off + page)
+            r["off"] = min(max(0, len(lines) - 2), off + page)
         elif ch in (curses.KEY_PPAGE, "\x15"):
-            self.reader[2] = max(0, off - page)
+            r["off"] = max(0, off - page)
         elif ch == "g":
-            self.reader[2] = 0
+            r["off"] = 0
         elif ch == "G":
-            self.reader[2] = max(0, len(lines) - page)
+            r["off"] = max(0, len(lines) - page)
+        elif ch == "m":                    # raw markdown vs rendered
+            r["raw"] = not r["raw"]
+            r["lines"], r["off"] = None, 0
         elif ch in ("\n", "\r", curses.KEY_ENTER):
             self.resume()
 

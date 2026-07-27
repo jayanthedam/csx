@@ -95,8 +95,10 @@ plus its summary line, `tab` cycles Claude/Codex/both.
 `^f` opens a folder picker — every folder with a session count, type to filter,
 enter to scope. (It started as "cycle to the next folder", which is unusable at
 28 folders.)
-`^r` opens the transcript in a built-in scrolling reader — `enter` resumes from
-in there too. Stdlib `curses`, no dependencies.
+`^r` opens the transcript in a built-in reader that renders the markdown —
+headings, bullets, blockquotes, fenced code as `┌─ bash │ …`, bold/italic/inline
+code — word-wrapped to your terminal. `m` flips to raw source, `g`/`G` jump,
+`enter` resumes from in there. Stdlib `curses`, no dependencies.
 
 ## Browser UI
 
