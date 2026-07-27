@@ -22,7 +22,7 @@ CLAUDE_ROOT = os.path.expanduser("~/.claude/projects")
 CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
-CACHE_V = 5
+CACHE_V = 6
 
 C = {"dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
      "y": "\033[33m", "c": "\033[36m", "g": "\033[32m", "m": "\033[35m"}
@@ -151,7 +151,7 @@ def head(path, src):
                                 named = (d.get("aiTitle") or "").strip()
                         except Exception:
                             pass
-                    if cwd and named:
+                    if cwd and renamed:
                         break
     except OSError:
         pass
@@ -167,7 +167,7 @@ def head(path, src):
 def profile(path, src):
     """One read per file: message count, first/last timestamp, cwd, id, title."""
     n = 0
-    first = last = cwd = sid = named = first_msg = ""
+    first = last = cwd = sid = named = renamed = first_msg = ""
     try:
         fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
@@ -193,7 +193,9 @@ def profile(path, src):
                     text = "\n".join(c.get("text", "") for c in p.get("content", [])
                                      if isinstance(c, dict))
             else:
-                if t == "ai-title" and not named:
+                if t == "custom-title" and d.get("customTitle"):
+                    renamed = d["customTitle"].strip()       # you ran /rename — always wins
+                elif t == "ai-title" and not named:
                     named = (d.get("aiTitle") or "").strip()
                 role, ts, text = None, d.get("timestamp", ""), None
                 if t in ("user", "assistant"):
@@ -210,7 +212,7 @@ def profile(path, src):
                     last = ts
                 if role == "user" and not first_msg and not is_noise(text):
                     first_msg = " ".join(text.split())[:160]
-    return n, first, last, cwd, sid, (named or first_msg)
+    return n, first, last, cwd, sid, (renamed or named or first_msg)
 
 
 # ---------- index ----------
@@ -300,6 +302,17 @@ def load(rescan=False, quiet=False):
 
 # ---------- display ----------
 
+def clock(iso):
+    """ISO timestamp from a transcript -> local 12-hour time."""
+    if not iso:
+        return ""
+    try:
+        d = dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+        return d.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+    except Exception:
+        return iso[:16]
+
+
 def ago(mtime):
     s = (dt.datetime.now() - dt.datetime.fromtimestamp(mtime)).total_seconds()
     for lim, div, u in ((60, 1, "s"), (3600, 60, "m"), (86400, 3600, "h"),
@@ -321,7 +334,7 @@ SCOPE = [""]
 
 
 def row(e, w=100):
-    when = dt.datetime.fromtimestamp(e["mtime"]).strftime("%m-%d %H:%M")
+    when = dt.datetime.fromtimestamp(e["mtime"]).strftime("%m-%d %I:%M%p").lower()
     t = e["title"] or f"{C['dim']}(no text){C['r']}"
     ident = e["id"] if FULL_IDS[0] else e["id"][:8]
     if e.get("kind") == "sub":
@@ -372,11 +385,11 @@ def cmd_deep(idx, terms, limit, ctx, meta, per=4):
             continue
         hits = []
         if all(p.search(e["title"]) for p in pats):
-            hits.append(("ttl", (e.get("start") or "")[:16], " ".join(e["title"].split())))
+            hits.append(("ttl", clock(e.get("start") or ""), " ".join(e["title"].split())))
         for role, ts, text in msgs(e, meta):
             if all(p.search(text) for p in pats):
                 m = pats[0].search(text)
-                hits.append((role, ts[:16],
+                hits.append((role, clock(ts),
                              " ".join(text[max(0, m.start() - ctx):m.start() + ctx].split())))
         if not hits:
             continue
@@ -479,7 +492,7 @@ def cmd_show(idx, ident, meta, grep):
     e = hit[0]
     kind = "codex" if e.get("src") == "codex" else "claude"
     emit(f"{C['b']}{e['id']}{C['r']} {C['dim']}[{kind}]{C['r']}  {e.get('cwd') or '?'}  "
-         f"{e['start'][:16]} → {e['end'][:16]}  {e['turns']} turns")
+         f"{clock(e['start'])} → {clock(e['end'])}  {e['turns']} messages")
     emit(f"{C['dim']}resume: {resume_cmd(e)}{C['r']}")
     emit()
     g = re.compile(grep, re.I) if grep else None
@@ -490,7 +503,7 @@ def cmd_show(idx, ident, meta, grep):
             continue
         agent = "CODEX" if e.get("src") == "codex" else "CLAUDE"
         who = f"{C['g']}YOU{C['r']}" if role == "user" else f"{C['b']}{agent}{C['r']}"
-        emit(f"{C['dim']}── {ts[:19]} {C['r']}{who}")
+        emit(f"{C['dim']}── {clock(ts)} {C['r']}{who}")
         emit(hl(text, [grep]) if g else text)
         emit()
 

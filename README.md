@@ -101,11 +101,15 @@ day-to-day cost is ~0.2s. A full cold rebuild of ~800 files / 1.3 GB is ~14s.
 *worse*: most Claude lines are genuinely `user`/`assistant` records, so the gate
 skips little while scanning every (sometimes 100 KB) line three more times.
 
-**Titles.** Claude Code names sessions itself and stores that as an `ai-title`
-record — the same name its own session picker shows ("Analyze work patterns and
-improve productivity"). About 63% of sessions have one; that always wins.
+**Titles.** Three sources, in order:
 
-Everything else falls back to the first real user message: system reminders,
+1. `custom-title` — what you set with `/rename`. Your name always wins.
+2. `ai-title` — the name Claude Code picks itself, and what its own `/resume`
+   picker shows ("Analyze work patterns and improve productivity"). ~63% of
+   sessions have one.
+3. the first real user message.
+
+The fallback filters noise first: system reminders,
 skill preambles, `AGENTS.md` blocks and Codex's `<environment_context>` are
 filtered out first, or the title is a wall of boilerplate. Codex writes no title
 record of its own, so Codex rows are always first-message titles.
@@ -138,6 +142,10 @@ number you get. `~/ABL` is 21 sessions; `~/ABL --sub` is 331.
 
 `-p` is different and deliberately loose: `-p abl-platform` is a substring match,
 so it *does* also hit `abl-platform-deploy`. Use `-i` when you mean one folder.
+
+**Clocks.** Everything renders in local 12-hour time. Transcript timestamps are
+stored UTC with a `Z`, so they're converted, not truncated — reading `13:47Z` as
+a wall-clock time would be off by your UTC offset.
 
 **Codex quirk.** A resumed Codex session writes several `rollout-*.jsonl` files
 under one session id. `show` and `resume` collapse them to the newest segment;

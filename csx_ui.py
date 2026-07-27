@@ -277,11 +277,11 @@ def build(csx):
                 hits = []
                 agent = "Codex" if e.get("src") == "codex" else "Claude"
                 if all(p.search(e["title"]) for p in pats):
-                    hits.append(["Title", (e.get("start") or "")[:16], " ".join(e["title"].split())])
+                    hits.append(["Title", csx.clock(e.get("start") or ""), " ".join(e["title"].split())])
                 for role, ts, text in csx.msgs(e, meta):
                     if all(p.search(text) for p in pats):
                         m = pats[0].search(text)
-                        hits.append(["You" if role == "user" else agent, ts[:16],
+                        hits.append(["You" if role == "user" else agent, csx.clock(ts),
                                      " ".join(text[max(0, m.start() - 100):m.start() + 140].split())])
                     if len(hits) >= 3:
                         break
@@ -299,8 +299,9 @@ def build(csx):
                 "id": e["id"],
                 "tag": tag,
                 "label": {"claude": "Claude", "codex": "Codex", "subagent": "Subagent"}[tag],
-                "when": when.strftime("%b %d, %H:%M"),
-                "full_when": when.strftime("%A %d %B %Y, %H:%M") + f"  ({csx.ago(e['mtime'])} ago)",
+                "when": when.strftime("%b %d, %I:%M %p").replace(" 0", " "),
+                "full_when": when.strftime("%A %d %B %Y, %I:%M %p").replace(" 0", " ")
+                             + f"  ({csx.ago(e['mtime'])} ago)",
                 "turns": e["turns"],
                 "proj": csx.proj(e),
                 "cwd": e.get("cwd") or "",
@@ -358,14 +359,14 @@ def build(csx):
                 for role, ts, text in csx.msgs(e, True):
                     if role == "user" and csx.is_noise(text):
                         continue
-                    turns.append([role, ts[:19], text[:20000]])
+                    turns.append([role, csx.clock(ts), text[:20000]])
                 agent = "Codex" if e.get("src") == "codex" else "Claude Code"
                 if e.get("kind") == "sub":
                     agent += " subagent"
                 return self._send(json.dumps({
                     "id": e["id"], "src": e.get("src", "claude"), "cwd": e.get("cwd") or "?",
                     "label": f"{agent} · {e['id'][:8]}",
-                    "turns": e["turns"], "start": e["start"][:16], "end": e["end"][:16],
+                    "turns": e["turns"], "start": csx.clock(e["start"]), "end": csx.clock(e["end"]),
                     "cmd": csx.resume_cmd(e), "turns_list": turns}), "application/json")
             self.send_error(404)
 
