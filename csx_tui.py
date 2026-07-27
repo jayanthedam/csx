@@ -12,7 +12,7 @@ import sys
 
 KEYS = [
     ("enter", "resume"), ("^r", "read"), ("^d", "deep"), ("^g", "global"),
-    ("^p", "prompts"), ("^y", "today"), ("^f", "folder"), ("tab", "tool"),
+    ("^p", "prompts"), ("^y", "today"), ("^f", "pick folder"), ("tab", "tool"),
     ("^u", "clear"), ("^n/^k", "move"), ("esc", "quit"),
 ]
 HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
@@ -27,10 +27,12 @@ class Tui:
         self.src = ""                # "" | claude | codex
         self.today = False
         self.folders = [("", "all folders")] + [
-            (p, self.short(p) + f" ({n})") for p, n, _ in csx.folders(self.all)[:14]]
+            (p, self.short(p), n) for p, n, _ in csx.folders(self.all)]
+        self.folders[0] = ("", "all folders", len(self.all))
         self.fi = 0
         self.rows, self.sel, self.top, self.note = [], 0, 0, ""
         self.reader = None           # (entry, lines, offset) when reading
+        self.picker = None           # {"q","sel"} when choosing a folder
         self.refilter()
 
     @staticmethod
@@ -159,11 +161,18 @@ class Tui:
             lines.append(("body", ""))
         self.reader = [e, lines, 0]
 
+    def picker_items(self):
+        q = self.picker["q"].lower()
+        return [(i, f) for i, f in enumerate(self.folders)
+                if not q or q in f[1].lower()]
+
     # ---------- drawing ----------
 
     def draw(self, scr, banner=None):
         if self.reader:
             return self.draw_reader(scr)
+        if self.picker is not None:
+            return self.draw_picker(scr)
         scr.erase()
         h, w = scr.getmaxyx()
         dim, sel_c = curses.color_pair(1), curses.color_pair(2)
@@ -216,6 +225,54 @@ class Tui:
 
         scr.addnstr(h - 1, 0, HELP[:w - 1].ljust(w - 1), w - 1, dim)
         scr.move(0, min(len(head), w - 1))
+
+    def draw_picker(self, scr):
+        scr.erase()
+        h, w = scr.getmaxyx()
+        dim, sel_c = curses.color_pair(1), curses.color_pair(2)
+        items = self.picker_items()
+        self.picker["sel"] = max(0, min(self.picker["sel"], len(items) - 1))
+        head = f" folder> {self.picker['q']}"
+        scr.addnstr(0, 0, head.ljust(w - 1), w - 1, curses.A_BOLD)
+        scr.addnstr(1, 0, f" {len(items)} of {len(self.folders)} · type to filter · "
+                          f"enter select · esc cancel".ljust(w - 1), w - 1, dim)
+        top = max(0, self.picker["sel"] - (h - 4))
+        y = 2
+        for n, (real_i, f) in enumerate(items[top:], start=top):
+            if y >= h - 1:
+                break
+            on = n == self.picker["sel"]
+            count = f[2] if len(f) > 2 else 0
+            line = f"{'▸' if on else ' '} {count:>5}  {f[1]}"
+            scr.addnstr(y, 0, line.ljust(w - 1), w - 1,
+                        (sel_c | curses.A_BOLD) if on else 0)
+            y += 1
+        scr.move(0, min(len(head), w - 1))
+
+    def key_picker(self, ch):
+        items = self.picker_items()
+        if ch == "\x1b":
+            self.picker = None
+        elif ch in (curses.KEY_DOWN, "\x0e"):
+            self.picker["sel"] = min(len(items) - 1, self.picker["sel"] + 1)
+        elif ch in (curses.KEY_UP, "\x0b"):
+            self.picker["sel"] = max(0, self.picker["sel"] - 1)
+        elif ch == curses.KEY_NPAGE:
+            self.picker["sel"] = min(len(items) - 1, self.picker["sel"] + 10)
+        elif ch == curses.KEY_PPAGE:
+            self.picker["sel"] = max(0, self.picker["sel"] - 10)
+        elif ch in ("\n", "\r", curses.KEY_ENTER):
+            if items:
+                self.fi = items[self.picker["sel"]][0]
+            self.picker = None
+            self.mode = "title"
+            self.refilter()
+        elif ch in ("\x7f", "\b", curses.KEY_BACKSPACE):
+            self.picker["q"] = self.picker["q"][:-1]
+            self.picker["sel"] = 0
+        elif isinstance(ch, str) and ch.isprintable():
+            self.picker["q"] += ch
+            self.picker["sel"] = 0
 
     def draw_reader(self, scr):
         e, lines, off = self.reader
@@ -283,6 +340,9 @@ class Tui:
             if self.reader:
                 self.key_reader(ch)
                 continue
+            if self.picker is not None:
+                self.key_picker(ch)
+                continue
 
             if ch == "\x1b":
                 return
@@ -308,10 +368,8 @@ class Tui:
                 self.today = not self.today
                 self.mode = "title"
                 self.refilter()
-            elif ch == "\x06":                       # ^f folder
-                self.fi = (self.fi + 1) % len(self.folders)
-                self.mode = "title"
-                self.refilter()
+            elif ch == "\x06":                       # ^f folder picker
+                self.picker = {"q": "", "sel": self.fi}
             elif ch == "\t":                         # tab tool
                 self.src = {"": "claude", "claude": "codex", "codex": ""}[self.src]
                 self.mode = "title"

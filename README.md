@@ -88,7 +88,11 @@ session.** You are just in it.
 
 Type to filter titles live. `^d` / `^g` / `^p` run the slower searches on what
 you typed (message bodies / everything / your prompt log). `^y` toggles today
-plus its summary line, `^f` cycles folders, `tab` cycles Claude/Codex/both.
+plus its summary line, `tab` cycles Claude/Codex/both.
+
+`^f` opens a folder picker — every folder with a session count, type to filter,
+enter to scope. (It started as "cycle to the next folder", which is unusable at
+28 folders.)
 `^r` opens the transcript in a built-in scrolling reader — `enter` resumes from
 in there too. Stdlib `curses`, no dependencies.
 
