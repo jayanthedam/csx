@@ -11,13 +11,32 @@ import os
 import shlex
 import sys
 
+# Plain letters, k9s style: "/" types a filter, everything else is an action.
+# Ctrl combos are avoided on purpose — terminals and keyboard layouts swallow
+# some of them (^x never reached us under Ghostty), and ^C/^Z/^S are spoken for.
 KEYS = [
-    ("enter", "resume"), ("^y", "copy"), ("^x", "danger"), ("^o", "fork"),
-    ("^r", "read"), ("^d", "deep"), ("^g", "global"),
-    ("^p", "prompts"), ("^t", "today"), ("^f", "pick folder"), ("tab", "tool"),
-    ("^u", "clear"), ("^n/^k", "move"), ("esc", "quit"),
+    ("/", "filter"), ("enter", "resume"), ("b", "branch/fork"), ("y", "copy cmd"),
+    ("Y", "copy id"), ("x", "danger"), ("r", "read"), ("d", "deep"),
+    ("a", "everything"), ("p", "prompts"), ("t", "today"), ("s", "tool"),
+    ("f", "folder"), ("?", "help"), ("q", "quit"),
 ]
 HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
+HELP_FULL = [
+    ("MOVE", "j / k / ↑ / ↓     line       g / G   top / bottom"),
+    ("", "space / pgdn        page down  pgup    page up"),
+    ("FIND", "/                   type a filter (enter applies, esc clears)"),
+    ("", "d                   search message bodies for the filter text"),
+    ("", "a                   search everything: + tool calls, results, subagents"),
+    ("", "p                   search your prompt log (even deleted sessions)"),
+    ("SCOPE", "f                   folder picker      t   only today"),
+    ("", "s                   claude / codex / both"),
+    ("USE", "enter               resume — this process becomes the session"),
+    ("", "b                   branch it instead (--fork-session)"),
+    ("", "y / Y               copy the resume command / the session id"),
+    ("", "x                   danger: resume + copy skip permission prompts"),
+    ("", "r                   read the transcript (markdown, m for raw)"),
+    ("QUIT", "q or esc            leave"),
+]
 
 
 def inline(text):
@@ -116,6 +135,8 @@ class Tui:
         self.rows, self.sel, self.top, self.note = [], 0, 0, ""
         self.reader = None           # (entry, lines, offset) when reading
         self.picker = None           # {"q","sel"} when choosing a folder
+        self.filtering = False       # "/" mode: keystrokes go to the query
+        self.helping = False
         self.refilter()
 
     @staticmethod
@@ -257,6 +278,8 @@ class Tui:
     def draw(self, scr, banner=None):
         if self.reader:
             return self.draw_reader(scr)
+        if self.helping:
+            return self.draw_help(scr)
         if self.picker is not None:
             return self.draw_picker(scr)
         scr.erase()
@@ -265,7 +288,8 @@ class Tui:
         tool_c = {"claude": curses.color_pair(3), "codex": curses.color_pair(4),
                   "gone": curses.color_pair(1)}
 
-        head = f" {self.mode}> {self.q}"
+        head = (f" /{self.q}" if self.filtering
+                else f" {self.mode}> {self.q}" + ("" if self.q else "   (press / to filter)"))
         scr.addnstr(0, 0, head.ljust(w - 1), w - 1, curses.A_BOLD)
         state = (f" {self.folders[self.fi][1]} · {self.src or 'claude+codex'}"
                  f"{' · today' if self.today else ''}"
@@ -313,7 +337,26 @@ class Tui:
                     y += 1
 
         scr.addnstr(h - 1, 0, HELP[:w - 1].ljust(w - 1), w - 1, dim)
+        try:
+            curses.curs_set(1 if self.filtering else 0)
+        except curses.error:
+            pass
         scr.move(0, min(len(head), w - 1))
+
+    def draw_help(self, scr):
+        scr.erase()
+        h, w = scr.getmaxyx()
+        dim = curses.color_pair(1)
+        scr.addnstr(0, 0, " csx tui — keys".ljust(w - 1), w - 1, curses.A_BOLD)
+        y = 2
+        for group, text in HELP_FULL:
+            if y >= h - 1:
+                break
+            if group:
+                scr.addnstr(y, 2, group, 8, curses.color_pair(2) | curses.A_BOLD)
+            scr.addnstr(y, 10, text[:w - 12], w - 12, 0)
+            y += 1
+        scr.addnstr(h - 1, 0, " any key to go back".ljust(w - 1), w - 1, dim)
 
     def draw_picker(self, scr):
         scr.erase()
@@ -456,68 +499,106 @@ class Tui:
                 return
             except Exception:
                 continue
-
-            if self.reader:
-                self.key_reader(ch)
-                continue
-            if self.picker is not None:
-                self.key_picker(ch)
-                continue
-
-            if ch == "\x1b":
+            try:
+                self.dispatch(ch, scr)
+            except KeyboardInterrupt:
                 return
-            elif ch in (curses.KEY_DOWN, "\x0e"):
-                self.sel = min(len(self.rows) - 1, self.sel + 1)
-            elif ch in (curses.KEY_UP, "\x0b"):
-                self.sel = max(0, self.sel - 1)
-            elif ch == curses.KEY_NPAGE:
-                self.sel = min(len(self.rows) - 1, self.sel + 10)
-            elif ch == curses.KEY_PPAGE:
-                self.sel = max(0, self.sel - 10)
-            elif ch in ("\n", "\r", curses.KEY_ENTER):
-                self.resume()
-            elif ch == "\x12":                       # ^r
-                self.open_reader()
-            elif ch == "\x0f":                       # ^o fork
-                self.resume(fork=True)
-            elif ch == "\x04":                       # ^d
-                self.run_search("deep", scr)
-            elif ch == "\x07":                       # ^g
-                self.run_search("global", scr)
-            elif ch == "\x10":                       # ^p prompt log
-                self.run_search("prompts", scr)
-            elif ch == "\x14":                       # ^t today
-                self.today = not self.today
-                self.mode = "title"
-                self.refilter()
-            elif ch == "\x18":                       # ^x danger toggle
-                self.danger = not self.danger
-                self.note = ("resume/copy will bypass permission prompts"
-                             if self.danger else "back to normal resume")
-            elif ch == "\x19":                       # ^y copy the resume command
-                e = self.current()
-                if e and e.get("kind") != "gone":
-                    cmd = self.csx.resume_cmd(e, danger=self.danger)
-                    tool = self.csx.clip(cmd)
-                    self.note = (f"copied ({tool})" + (" ⚠ danger" if self.danger else "")
-                                 if tool else "no clipboard tool (wl-copy/xclip/xsel)")
-            elif ch == "\x06":                       # ^f folder picker
-                self.picker = {"q": "", "sel": self.fi}
-            elif ch == "\t":                         # tab tool
-                self.src = {"": "claude", "claude": "codex", "codex": ""}[self.src]
-                self.mode = "title"
-                self.refilter()
-            elif ch == "\x15":                       # ^u
-                self.q, self.mode, self.note = "", "title", ""
-                self.refilter()
-            elif ch in ("\x7f", "\b", curses.KEY_BACKSPACE):
-                self.q = self.q[:-1]
-                self.mode = "title"
-                self.refilter()
-            elif isinstance(ch, str) and ch.isprintable():
-                self.q += ch
-                self.mode = "title"
-                self.refilter()
+
+    def dispatch(self, ch, scr):
+
+        if self.helping:
+            self.helping = False
+            return
+        if self.reader:
+            return self.key_reader(ch)
+        if self.picker is not None:
+            return self.key_picker(ch)
+        if self.filtering:
+            return self.key_filter(ch)
+        self.key_normal(ch, scr)
+
+    def key_filter(self, ch):
+        """'/' mode: keystrokes build the query, enter keeps it, esc drops it."""
+        if ch in ("\n", "\r", curses.KEY_ENTER):
+            self.filtering = False
+        elif ch == "\x1b":
+            self.filtering = False
+            self.q, self.mode = "", "title"
+            self.refilter()
+        elif ch in ("\x7f", "\b", curses.KEY_BACKSPACE):
+            self.q = self.q[:-1]
+            self.mode = "title"
+            self.refilter()
+        elif ch in (curses.KEY_DOWN, curses.KEY_UP):
+            self.sel = max(0, self.sel + (1 if ch == curses.KEY_DOWN else -1))
+        elif isinstance(ch, str) and ch.isprintable():
+            self.q += ch
+            self.mode = "title"
+            self.refilter()
+
+    def key_normal(self, ch, scr):
+        r = self.rows
+        page = max(1, self.h - 6)
+        if ch in ("q", "\x1b"):
+            raise KeyboardInterrupt
+        elif ch == "/":
+            self.filtering = True
+        elif ch == "?":
+            self.helping = True
+        elif ch in ("j", curses.KEY_DOWN):
+            self.sel = min(len(r) - 1, self.sel + 1)
+        elif ch in ("k", curses.KEY_UP):
+            self.sel = max(0, self.sel - 1)
+        elif ch in (" ", curses.KEY_NPAGE):
+            self.sel = min(len(r) - 1, self.sel + page)
+        elif ch == curses.KEY_PPAGE:
+            self.sel = max(0, self.sel - page)
+        elif ch == "g":
+            self.sel = 0
+        elif ch == "G":
+            self.sel = max(0, len(r) - 1)
+        elif ch in ("\n", "\r", curses.KEY_ENTER):
+            self.resume()
+        elif ch == "b":
+            self.resume(fork=True)
+        elif ch == "r":
+            self.open_reader()
+        elif ch == "y":
+            self.copy_cmd()
+        elif ch == "Y":
+            e = self.current()
+            if e:
+                tool = self.csx.clip(e["id"])
+                self.note = f"copied id ({tool})" if tool else "no clipboard tool"
+        elif ch == "x":
+            self.danger = not self.danger
+            self.note = ("danger on — resume and copy skip permission prompts"
+                         if self.danger else "danger off")
+        elif ch == "d":
+            self.run_search("deep", scr)
+        elif ch == "a":
+            self.run_search("global", scr)
+        elif ch == "p":
+            self.run_search("prompts", scr)
+        elif ch == "t":
+            self.today = not self.today
+            self.mode = "title"
+            self.refilter()
+        elif ch == "f":
+            self.picker = {"q": "", "sel": self.fi}
+        elif ch == "s":
+            self.src = {"": "claude", "claude": "codex", "codex": ""}[self.src]
+            self.mode = "title"
+            self.refilter()
+
+    def copy_cmd(self):
+        e = self.current()
+        if not e or e.get("kind") == "gone":
+            return
+        cmd = self.csx.resume_cmd(e, danger=self.danger)
+        tool = self.csx.clip(cmd)
+        self.note = ((f"copied ({tool})" + (" ⚠ danger" if self.danger else ""))
+                     if tool else "no clipboard tool (wl-copy/xclip/xsel)")
 
 
 def run(csx):

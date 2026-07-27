@@ -126,7 +126,7 @@ mark{background:var(--hl);color:inherit}
       <input type="checkbox" id="danger"> ⚠ danger</label>
     <button id="theme" title="Switch between light, dark and system theme">Theme: Auto</button>
   </div>
-  <div class="hint" id="hint">↑↓ move · Enter read · <b>o</b> open in terminal · <b>y</b> copy · / search</div>
+  <div class="hint" id="hint">↑↓ move · Enter read · <b>o</b> resume · <b>b</b> branch · <b>y</b> copy · <b>x</b> danger · / search</div>
 </header>
 <div id="day"></div>
 <main id="list"></main>
@@ -381,6 +381,9 @@ document.addEventListener("keydown", e => {
     if (e.key === "Enter"){ e.preventDefault(); open_session(r[sel].dataset.id); }
     else if (e.key === "y"){ copyRow(r[sel]); }
     else if (e.key === "o"){ launch(r[sel].dataset.id); }
+    else if (e.key === "b"){ launch(r[sel].dataset.id, true); }
+    else if (e.key === "x"){ $("#danger").checked = !$("#danger").checked;
+                             $("#danger").dispatchEvent(new Event("change")); }
   }
 });
 

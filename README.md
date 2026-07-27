@@ -92,21 +92,26 @@ session.** You are just in it.
  enter resume · ^r read · ^d deep · ^g global · ^p prompts · ^y today · ^f folder …
 ```
 
-Type to filter titles live. `^d` / `^g` / `^p` run the slower searches on what
-you typed (message bodies / everything / your prompt log). `^y` toggles today
-plus its summary line, `tab` cycles Claude/Codex/both.
+`/` starts a filter (enter applies, esc clears). Everything else is a plain
+letter — no Ctrl combos, because terminals and layouts swallow some of them
+(`^x` never arrived under Ghostty) and `^C`/`^Z`/`^S` are already spoken for:
 
-`^y` copies the resume command (wl-copy / xclip / xsel / pbcopy). `^x` toggles
-**danger mode** — resume, fork and copy then carry the permission-bypass flag,
-and the state line says `⚠ danger (no prompts)` so it is never a surprise.
+| | |
+|---|---|
+| `j` `k` `g` `G` `space` | move, top, bottom, page |
+| `enter` | resume — this process becomes the session |
+| `b` | branch it instead (`--fork-session`) |
+| `y` / `Y` | copy the resume command / the session id |
+| `x` | danger: resume and copy skip permission prompts |
+| `r` | read the transcript (markdown; `m` for raw source) |
+| `d` / `a` / `p` | search bodies / everything / your prompt log |
+| `t` / `s` / `f` | today · claude-codex-both · folder picker |
+| `?` / `q` | keys · quit |
 
-`^f` opens a folder picker — every folder with a session count, type to filter,
-enter to scope. (It started as "cycle to the next folder", which is unusable at
-28 folders.)
-`^r` opens the transcript in a built-in reader that renders the markdown —
-headings, bullets, blockquotes, fenced code as `┌─ bash │ …`, bold/italic/inline
-code — word-wrapped to your terminal. `m` flips to raw source, `g`/`G` jump,
-`enter` resumes from in there. Stdlib `curses`, no dependencies.
+`f` opens a folder picker — every folder with a session count, type to filter,
+enter to scope. `r` opens a built-in reader that renders the markdown —
+headings, bullets, blockquotes, fenced code as `┌─ bash │ …`, inline styles —
+word-wrapped to your terminal. Stdlib `curses`, no dependencies.
 
 ## Browser UI
 
