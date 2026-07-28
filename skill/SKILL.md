@@ -33,20 +33,34 @@ without it the CLI opens `less` and will hang a non-interactive shell.
    csx -d "<term>" -i ~/ABL --no-pager        # sessions run in that folder
    csx -d "<term>" -i ~/ABL --sub --no-pager  # ...and its subfolders
    csx -d "<term>" --codex --no-pager         # Codex only (--claude for the other)
+   csx -d "<term>" -b <branch> --no-pager     # only sessions on that git branch
    csx --folders --no-pager                   # every folder with a session count
+   csx --live --no-pager                      # sessions running right now
    ```
 
-3. **Still nothing? Search the prompt log.** Every prompt the user ever typed is
-   in `~/.claude/history.jsonl`, including prompts whose session was deleted or
-   compacted away. Nothing else reaches these:
+   Zero-message sessions are hidden by default; pass `--empty` if the user is
+   looking for one they abandoned immediately.
+
+3. **Still nothing? `-g` reaches further than `-d`.** It adds tool calls *and
+   tool results* — error text, command output, file contents the agent read.
+   An error string like `ERR_PNPM` finds ~20x more sessions under `-g` than `-d`.
 
    ```bash
-   python3 -c "
-   import json,os
-   for l in open(os.path.expanduser('~/.claude/history.jsonl'),errors='ignore'):
-       d=json.loads(l)
-       if '<term>' in d.get('display','').lower(): print(d['timestamp'], d['project'], d['display'][:160])
-   "
+   csx -g "<term>" --no-pager -n 10
+   ```
+
+   And the user's prompt log is a separate corpus: every prompt ever typed,
+   including ones whose session was deleted or compacted away.
+
+   ```bash
+   python3 - "<term>" <<'EOF'
+   import json, os, sys
+   term = sys.argv[1].lower()
+   for l in open(os.path.expanduser("~/.claude/history.jsonl"), errors="ignore"):
+       d = json.loads(l)
+       if term in d.get("display", "").lower():
+           print(d["timestamp"], d["project"], d["display"][:160])
+   EOF
    ```
 
 4. **Read the transcript.** Do not dump it — it can be thousands of messages.
@@ -63,8 +77,14 @@ without it the CLI opens `less` and will hang a non-interactive shell.
    session id and its resume command:
 
    ```bash
-   csx resume <id-prefix>      # prints: cd <cwd> && claude --resume <full-id>
+   csx resume <id-prefix>              # cd <cwd> && claude --resume <full-id>
+   csx resume <id-prefix> --copy       # ...and put it on the clipboard
+   csx resume <id-prefix> --fork       # branch it instead of continuing it
    ```
+
+   Do NOT add `--danger` unless the user asked for it — it bypasses every
+   permission prompt (`--dangerously-skip-permissions` /
+   `--dangerously-bypass-approvals-and-sandbox`).
 
 ## Reading the output
 
@@ -85,7 +105,9 @@ claude   cf36f5b1 07-26 11:43pm  13h  125 msgs ABL   Analyze work patterns and i
 
 - Searching everything takes a few seconds (~1 GB of transcripts); scoping with
   `-i` or `--claude`/`--codex` is much faster than filtering after the fact.
-- The user also has a browser UI (`csx ui`) — mention it only if they ask to
-  browse rather than to have an answer found for them.
+- The user also has `csx tui` (terminal, enter resumes in place) and `csx ui`
+  (browser). Mention them only if they ask to browse rather than to have an
+  answer found for them — your job is to return the answer, not a tool tip.
+- A `·` before a row means that session is running right now.
 - Don't guess a session id. If several match, list them with their titles and
   dates and let the user pick.
