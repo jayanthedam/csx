@@ -189,6 +189,37 @@ pid is checked against `/proc`), and any resumed session — Claude or Codex —
 carries its id on the process command line, so `/proc/*/cmdline` is scanned too.
 Cached for 3s so redraws stay cheap.
 
+## Skills
+
+Two skills ship with the repo, symlinked into `~/.claude/skills/`:
+
+- **session-recall** — find and read past sessions, report what is running.
+  Backed by csx.
+- **session-delegate** — hand work to another session: prepare a warm successor,
+  launch bounded workers, monitor them, write/resume handoff files.
+
+They replaced three overlapping skills (`find-session`, `ai-session-orchestrator`,
+`session-handoff`), whose originals sit in `~/.claude/skills-retired/`.
+
+The interesting piece is **prepare**: instead of writing a markdown handoff for
+a human to paste, the current chat creates the successor itself —
+
+```bash
+SID=$(python3 -c "import uuid; print(uuid.uuid4())")
+claude -p --session-id "$SID" --permission-mode auto --output-format json \
+  "$(cat prime.txt)" < /dev/null > prime.json
+csx resume "$SID"
+```
+
+`-p --session-id` runs a real session that persists to disk under an id you
+chose, so `claude --resume $SID` later opens a chat whose history already
+contains everything the successor read. You get a resume command, not homework.
+Two details that cost a debugging round each: the prompt must come from a file
+(an apostrophe in an inlined heredoc silently strips it), and `< /dev/null` is
+required or a stdin warning corrupts the JSON.
+
+Scenarios for checking the skills still behave: [skills/evals.md](skills/evals.md)
+
 ## Design notes
 
 **The index.** One read per file builds `~/.claude/.csx-index.json` (path, id,
