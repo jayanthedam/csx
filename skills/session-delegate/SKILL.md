@@ -117,10 +117,35 @@ csx resume "$SID"        # prints: cd <cwd> && claude --resume <id>
 Give the user that one line and a sentence on what the successor already knows.
 It will open with the full priming exchange in its history.
 
-**Codex successor:** same shape with `codex exec -C <cwd> -s read-only
---skip-git-repo-check -o /tmp/prime-<slug>.md "$(cat /tmp/prime-<slug>.txt)"`,
-then take the newest id from `csx --codex --no-pager -n 1 -f` and resume with
-`codex resume <id>`.
+### Codex successor
+
+Same four steps. Codex prints its id as a `thread.started` event under `--json`:
+
+```bash
+timeout 15m codex exec -C <target cwd> -s read-only --skip-git-repo-check --json \
+  -o /tmp/prime-<slug>.md "$(cat /tmp/prime-<slug>.txt)" \
+  < /dev/null > /tmp/prime-<slug>.jsonl 2>&1
+
+SID=$(python3 -c "
+import json
+for line in open('/tmp/prime-<slug>.jsonl', errors='ignore'):
+    try:
+        d = json.loads(line)      # first line is a stdin notice, not JSON
+    except ValueError:
+        continue
+    if d.get('type') == 'thread.started':
+        print(d['thread_id']); break
+")
+cat /tmp/prime-<slug>.md          # the successor's restatement
+csx resume "$SID"                 # cd <cwd> && codex resume <id>
+```
+
+`-s read-only` is the Codex equivalent of a read-only priming run. Never prime
+with `--dangerously-bypass-approvals-and-sandbox`.
+
+Do not nest a `<<PY` heredoc inside another heredoc to build these commands —
+the inner terminator closes the outer one. Write the script to a file, or use
+`python3 -c` as above.
 
 ---
 

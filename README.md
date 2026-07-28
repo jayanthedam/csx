@@ -191,15 +191,25 @@ Cached for 3s so redraws stay cheap.
 
 ## Skills
 
-Two skills ship with the repo, symlinked into `~/.claude/skills/`:
+Two skills ship with the repo, symlinked into **both** `~/.claude/skills/` and
+`~/.codex/skills/` — same `SKILL.md` format, one source of truth, so editing the
+repo updates what both tools load:
 
 - **session-recall** — find and read past sessions, report what is running.
   Backed by csx.
 - **session-delegate** — hand work to another session: prepare a warm successor,
   launch bounded workers, monitor them, write/resume handoff files.
 
+```bash
+for d in ~/.claude/skills ~/.codex/skills; do
+  ln -sfn ~/personal/project/csx/skills/session-recall   "$d/session-recall"
+  ln -sfn ~/personal/project/csx/skills/session-delegate "$d/session-delegate"
+done
+```
+
 They replaced three overlapping skills (`find-session`, `ai-session-orchestrator`,
-`session-handoff`), whose originals sit in `~/.claude/skills-retired/`.
+`session-handoff`), whose originals sit in `~/.claude/skills-retired/` and
+`~/.codex/skills-retired/`.
 
 The interesting piece is **prepare**: instead of writing a markdown handoff for
 a human to paste, the current chat creates the successor itself —
@@ -210,6 +220,9 @@ claude -p --session-id "$SID" --permission-mode auto --output-format json \
   "$(cat prime.txt)" < /dev/null > prime.json
 csx resume "$SID"
 ```
+
+Codex takes the same four steps — `codex exec --json` prints the id as a
+`thread.started` event, then `codex resume <id>`.
 
 `-p --session-id` runs a real session that persists to disk under an id you
 chose, so `claude --resume $SID` later opens a chat whose history already
