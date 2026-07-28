@@ -1,6 +1,6 @@
 ---
 name: session-delegate
-description: "Hands work from this chat to another Claude Code or Codex session: prepares a successor session that has already read the context and returns its resume command, launches bounded background workers, checks whether a running worker is alive or hung, and writes or resumes durable handoff files. Use when the user says hand off, continue in a new chat, prep another session, my context is full, launch a worker, run this in the background, is that agent still running, or asks for a resume command for work that does not exist yet."
+description: "Hands work from this chat to another Claude Code or Codex session: prepares a successor session that has already read the context and returns its resume command, launches bounded background workers such as PR or diff reviewers and lets the user join them afterwards, checks whether a running worker is alive or hung, and writes or resumes durable handoff files. Use when the user says hand off, continue in a new chat, prep another session, my context is full, launch a worker, run this in the background, is that agent still running, or asks for a resume command for work that does not exist yet."
 ---
 
 # Session Delegate
@@ -151,15 +151,48 @@ the inner terminator closes the outer one. Write the script to a file, or use
 
 ## MODE: WORKER — one bounded job, findings back
 
-For "investigate X and tell me", not for continuing a conversation.
-Commands per CLI: [reference/launching.md](reference/launching.md)
+For "review this PR", "investigate X and tell me", "run that audit in the
+background". Commands per CLI: [reference/launching.md](reference/launching.md)
+
+**Give every worker a session id too.** A review is rarely finished when the
+findings land — the next question is "why did you flag that?". With an id the
+user can join the reviewer instead of re-explaining the diff to a fresh chat.
+
+```bash
+cat > /tmp/worker-<slug>.txt <<'PROMPT'
+You are a worker session launched by another AI agent.
+CWD: <absolute path>
+Scope: <exact task — e.g. review ONLY the diff `git diff origin/develop...HEAD`>
+Permissions: read-only. Do not edit files. Do not switch branches.
+Return: findings ranked CRITICAL/HIGH/MED/LOW, each with file:line and evidence.
+PROMPT
+
+SID=$(python3 -c "import uuid; print(uuid.uuid4())")
+timeout --preserve-status --signal=INT --kill-after=2m 30m \
+  claude -p --session-id "$SID" --permission-mode auto \
+  "$(cat /tmp/worker-<slug>.txt)" < /dev/null > /tmp/worker-<slug>.md 2>&1
+
+cat /tmp/worker-<slug>.md      # the findings
+csx resume "$SID"              # join the reviewer to ask follow-ups
+```
+
+Codex equivalent: `codex exec --json -o /tmp/worker-<slug>.md`, then take
+`thread_id` from the `thread.started` event (see the Codex successor recipe
+above) and `codex resume <id>`.
+
+Report **both** to the user: where the findings are, and the one command that
+continues the conversation with the worker that produced them.
 
 Non-negotiables, because each has burned a run before:
 
 - **Bounded scope.** Exact task, cwd, whether edits are allowed, expected output.
 - **A durable output file** (`-o` for Codex, redirect for Claude) and a
   `timeout` budget. Never launch unattended without both.
-- **Split large jobs.** One worker per subsystem beats one worker for a repo.
+- **Split large jobs.** One worker per subsystem beats one worker for a repo —
+  Terraform, Helm, and secret handling as three reviewers, not one.
+- **Background, not blocking**, when the user wants to keep working:
+  `claude --bg ...` then `claude agents --json`, or launch with `&` and check
+  progress via `csx --live`.
 
 ## MODE: HANDOFF FILE — durable, human-readable
 
