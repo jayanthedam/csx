@@ -208,8 +208,8 @@ done
 ```
 
 They replaced three overlapping skills (`find-session`, `ai-session-orchestrator`,
-`session-handoff`), whose originals sit in `~/.claude/skills-retired/` and
-`~/.codex/skills-retired/`.
+`session-handoff`), now deleted from both tools. The originals are kept in
+[skills/retired/](skills/retired/) purely for recovery — nothing loads them.
 
 The interesting piece is **prepare**: instead of writing a markdown handoff for
 a human to paste, the current chat creates the successor itself —
