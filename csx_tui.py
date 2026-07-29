@@ -137,6 +137,7 @@ class Tui:
         self.picker = None           # {"q","sel"} when choosing a folder
         self.filtering = False       # "/" mode: keystrokes go to the query
         self.helping = False
+        self.warned = None
         self.refilter()
 
     @staticmethod
@@ -246,6 +247,13 @@ class Tui:
         if not e or e.get("kind") == "gone":
             self.note = "that prompt's session is gone — nothing to resume"
             return
+        # a live session cannot be resumed if it is a background agent; the CLI
+        # refuses and tells you to fork. Warn once, then let the user insist.
+        if not fork and e["id"] in self.csx.live_ids():
+            if self.warned != e["id"]:
+                self.warned = e["id"]
+                self.note = "this session is LIVE — b forks a copy, enter again to resume anyway"
+                return
         cwd = e.get("cwd") or os.path.expanduser("~")
         if os.path.isdir(cwd):
             os.chdir(cwd)

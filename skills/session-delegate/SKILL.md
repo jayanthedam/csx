@@ -226,7 +226,13 @@ its exit can overwrite the new run's file.
 
 ## Is it still running?
 
-`csx --live --no-pager` lists sessions with a live process. For deciding alive
+`csx --live --no-pager` lists sessions with a live process.
+
+**A running session cannot be resumed.** `claude --resume` refuses with
+*"Session X is currently running as a background agent — use `claude agents` to
+attach, or add --fork-session to branch off a copy."* So for a live session:
+attach with `claude agents`, or fork it. `csx resume` warns before handing you a
+command that will bounce. For deciding alive
 vs waiting vs hung, and the budget guidance:
 [reference/monitoring.md](reference/monitoring.md)
 

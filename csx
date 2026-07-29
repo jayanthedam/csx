@@ -731,6 +731,10 @@ def cmd_resume(idx, ident, danger=False, fork=False, do_copy=False):
             sys.exit(f"{e['id']} is a subagent run; parent {e['parent']} not indexed")
         emit(f"{C['dim']}{e['id'][:8]} is a subagent run — resuming its parent:{C['r']}")
         e = par[0]
+    if not fork and e["id"] in live_ids():
+        emit(f"{C['y']}# this session is running right now — resuming a live "
+             f"background agent is refused by the CLI;{C['r']}")
+        emit(f"{C['y']}# add --fork to branch a copy instead.{C['r']}")
     cmd = resume_cmd(e, fork=fork, danger=danger)
     if do_copy:
         tool = clip(cmd)

@@ -47,7 +47,7 @@ Read-only. It never writes to either tool's directory — its own index lives at
 | `--empty` | include sessions with no messages (hidden by default) |
 | `--live` | only sessions running right now |
 | `resume --danger` | add the permission-bypass flag for that tool |
-| `resume --fork` | branch the session instead of continuing it |
+| `resume --fork` | branch the session instead of continuing it (required if it is live) |
 | `resume --copy` | put the command on the clipboard |
 | `--claude` / `--codex` | restrict to one tool |
 | `-p NAME` | substring match on project name or cwd |
