@@ -132,3 +132,4 @@ claude   cf36f5b1 07-26 11:43pm  13h  125 msgs ABL   main   Analyze work pattern
   command, not a transcript of which flags were tried.
 - `csx tui` and `csx ui` exist for browsing. Mention them only if the user asks
   to browse — being asked to find something is not a request for a tool tip.
+# drift test
