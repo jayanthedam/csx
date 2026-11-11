@@ -4,7 +4,7 @@ Every Claude Code and Codex conversation is already on disk as JSONL. `csx` make
 that pile searchable: list every session, find the one where you discussed a thing,
 read it back, and get the exact command to resume it.
 
-Two files, no dependencies, no build step, no network calls.
+Three Python files, no dependencies, no build step, no network calls.
 
 ```
 csx                        full-screen terminal UI (`csx tui` also works)
@@ -20,9 +20,11 @@ csx ui                     browser view, click a row to copy its resume command
 ## Install
 
 ```bash
-ln -sf ~/personal/project/csx/csx      ~/.local/bin/csx
-ln -sf ~/personal/project/csx/csx_ui.py ~/.local/bin/csx_ui.py
+git clone https://github.com/jayanthedam/csx ~/csx
+ln -sf ~/csx/csx ~/.local/bin/csx
 ```
+
+One link is enough: `csx` finds `csx_tui.py` and `csx_ui.py` next to the real file.
 
 Requires Python 3.8+ and `less` (already on any Linux box). Nothing else.
 
@@ -84,13 +86,9 @@ The same thing without leaving the terminal, and the reason to prefer it:
 **Enter doesn't copy a command or spawn a window — the process `exec`s into the
 session.** You are just in it.
 
-```
- search titles: agent tables          [titles]   messages    everything    my prompts
- ~/ABL · claude+codex · 12 shown
-   TOOL    WHEN            MSGS FOLDER           TITLE
- ▸ claude  jul 27 12:27pm    50 ABL              AGENT TABLES
- type to search · ↑↓ pick · enter open · → read · tab look inside · ^o options · esc clear/quit
-```
+![csx TUI: session list](docs/tui.png)
+
+![csx TUI: search with the ^o options menu open](docs/tui-menu.png)
 
 Sessions an agent started headless (`claude -p`, `codex exec`) and nobody
 opened are hidden from the plain list. Typing a search still finds them, dimmed.
@@ -104,7 +102,7 @@ the title, press Enter, you are back in the session.
 | `tab` | look inside: messages → + tool calls & subagents → your prompt log → titles |
 | `↑` `↓` (`^n` `^p`), `pgup` `pgdn` | pick |
 | `enter` | open — this process becomes the session. No title match? Enter searches messages. |
-| `→` | read the transcript (`←` or `esc` back, `m` raw markdown) |
+| `→` | read the transcript, opened at the latest message (`←` or `esc` back, `m` raw markdown) |
 | `esc` | clear the search; on an empty search, quit |
 | `^o` or `F2` | options: `f` folder · `t` today · `s` claude/codex/both · `b` fork · `y`/`Y` copy command/id · `x` danger · `w` show workers · `?` keys · `q` quit |
 

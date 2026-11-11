@@ -850,12 +850,12 @@ def main():
     # bare `csx` in a real terminal opens the TUI; any flag or pipe keeps the list
     bare = len(sys.argv) == 1 and sys.stdin.isatty() and sys.stdout.isatty()
     if bare or (a.terms and a.terms[0] in ("tui", "t")):
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
         import csx_tui
         return csx_tui.run(sys.modules[__name__])
 
     if a.terms and a.terms[0] in ("ui", "serve"):
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
         import csx_ui
         port = int(a.terms[1]) if len(a.terms) > 1 else 8787
         return csx_ui.serve(sys.modules[__name__], port, not a.no_open)
