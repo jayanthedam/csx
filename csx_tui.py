@@ -4,38 +4,35 @@ Same index, same search, same features. The difference that matters: Enter
 *becomes* the session (os.execvp), so there is no window to spawn and nothing
 to paste.
 
-Launched by `csx tui`. Stdlib curses only.
+Launched by `csx` (or `csx tui`) in a terminal. Stdlib curses only.
 """
 import curses
 import os
 import shlex
 import sys
 
-# Plain letters, k9s style: "/" types a filter, everything else is an action.
-# Ctrl combos are avoided on purpose — terminals and keyboard layouts swallow
-# some of them (^x never reached us under Ghostty), and ^C/^Z/^S are spoken for.
-KEYS = [
-    ("/", "filter"), ("enter", "resume"), ("b", "branch/fork"), ("y", "copy cmd"),
-    ("Y", "copy id"), ("x", "danger"), ("r", "read"), ("d", "deep"),
-    ("a", "everything"), ("p", "prompts"), ("t", "today"), ("s", "tool"),
-    ("f", "folder"), ("?", "help"), ("q", "quit"),
-]
-HELP = " · ".join(f"{k} {v}" for k, v in KEYS)
+# fzf style: there is one mode and you are always typing. Letters always go to
+# the search; only arrows, enter, tab, esc and ^o act. Everything else lives in
+# the ^o menu, where letters are safe to use as actions. F2 opens it too, in
+# case a terminal swallows ^o (^x never reached us under Ghostty).
+CTRL_O, TAB, ESC = "\x0f", "\t", "\x1b"
+MODES = ["title", "deep", "global", "prompts"]          # tab cycles through these
+LABEL = {"title": "titles", "deep": "messages", "global": "everything",
+         "prompts": "my prompts"}
+FOOT = "type to search · ↑↓ pick · enter open · → read · tab look inside · ^o options · esc clear/quit"
+MENU = [("f", "folder"), ("t", "only today"), ("s", "claude / codex / both"),
+        ("b", "branch it (fork) instead of resume"), ("y", "copy the resume command"),
+        ("Y", "copy the session id"), ("x", "danger: skip permission prompts"),
+        ("w", "show agent workers in the list"),
+        ("?", "all keys"), ("q", "quit")]
 HELP_FULL = [
-    ("MOVE", "j / k / ↑ / ↓     line       g / G   top / bottom"),
-    ("", "space / pgdn        page down  pgup    page up"),
-    ("FIND", "/                   type a filter (enter applies, esc clears)"),
-    ("", "d                   search message bodies for the filter text"),
-    ("", "a                   search everything: + tool calls, results, subagents"),
-    ("", "p                   search your prompt log (even deleted sessions)"),
-    ("SCOPE", "f                   folder picker      t   only today"),
-    ("", "s                   claude / codex / both"),
-    ("USE", "enter               resume — this process becomes the session"),
-    ("", "b                   branch it instead (--fork-session)"),
-    ("", "y / Y               copy the resume command / the session id"),
-    ("", "x                   danger: resume + copy skip permission prompts"),
-    ("", "r                   read the transcript (markdown, m for raw)"),
-    ("QUIT", "q or esc            leave"),
+    ("FIND", "type                search titles, live"),
+    ("", "tab                 look inside: messages → + tool calls → my prompts → titles"),
+    ("", "esc                 clear the search; on an empty search, quit"),
+    ("PICK", "↑ ↓ / ^n ^p         line       pgup / pgdn   page"),
+    ("USE", "enter               open — this process becomes the session"),
+    ("", "→                   read the transcript (← or esc back, m raw)"),
+    ("MORE", "^o or F2            options: folder, today, tool, fork, copy, danger, workers"),
 ]
 
 
@@ -128,6 +125,7 @@ class Tui:
         self.src = ""                # "" | claude | codex
         self.today = False
         self.danger = False          # resume/copy with permissions bypassed
+        self.workers = False         # show agent-launched workers in the plain list
         self.folders = [("", "all folders")] + [
             (p, self.short(p), n) for p, n, _ in csx.folders(self.all)]
         self.folders[0] = ("", "all folders", len(self.all))
@@ -135,7 +133,7 @@ class Tui:
         self.rows, self.sel, self.top, self.note = [], 0, 0, ""
         self.reader = None           # (entry, lines, offset) when reading
         self.picker = None           # {"q","sel"} when choosing a folder
-        self.filtering = False       # "/" mode: keystrokes go to the query
+        self.menu = False            # ^o options open
         self.helping = False
         self.warned = None
         self.refilter()
@@ -169,19 +167,22 @@ class Tui:
         """Title filtering is instant, so it runs on every keystroke."""
         idx = self.scope()
         terms = [t.lower() for t in self.terms()]
+        if not terms and not self.workers:      # a search still finds them, dimmed
+            idx = [e for e in idx if not e.get("worker")]
         if terms and self.mode == "title":
             idx = [e for e in idx
                    if all(t in (e["title"] + " " + e.get("cwd", "")).lower() for t in terms)]
         self.rows = [(e, None) for e in idx]
         self.sel = self.top = 0
+        self.note = ""                     # an old "N results" line would mislead
 
     def run_search(self, mode, scr):
         """deep/global/prompts take seconds, so say so before blocking."""
         if not self.q.strip():
-            self.note = "type something first, then ^d / ^g / ^p"
+            self.note = "type what you remember first, then tab"
             return
         self.mode = mode
-        self.draw(scr, banner=f"searching {mode} for “{self.q}”…")
+        self.draw(scr, banner=f"searching {LABEL[mode]} for “{self.q}”…")
         scr.refresh()
         t0 = self.csx.dt.datetime.now()
         if mode == "prompts":
@@ -252,7 +253,7 @@ class Tui:
         if not fork and e["id"] in self.csx.live_ids():
             if self.warned != e["id"]:
                 self.warned = e["id"]
-                self.note = "this session is LIVE — b forks a copy, enter again to resume anyway"
+                self.note = "this session is LIVE — ^o b forks a copy, enter again to resume anyway"
                 return
         cwd = e.get("cwd") or os.path.expanduser("~")
         if os.path.isdir(cwd):
@@ -273,7 +274,8 @@ class Tui:
         blocks = [("YOU" if role == "user" else agent, self.csx.clock(ts), body)
                   for role, ts, body in self.csx.msgs(e)
                   if not (role == "user" and self.csx.is_noise(body))]
-        self.reader = {"e": e, "blocks": blocks, "off": 0, "lines": None,
+        # off -1 = "start at the end": the latest messages are what you came for
+        self.reader = {"e": e, "blocks": blocks, "off": -1, "lines": None,
                        "width": 0, "raw": False}
 
     def picker_items(self):
@@ -296,9 +298,11 @@ class Tui:
         tool_c = {"claude": curses.color_pair(3), "codex": curses.color_pair(4),
                   "gone": curses.color_pair(1)}
 
-        head = (f" /{self.q}" if self.filtering
-                else f" {self.mode}> {self.q}" + ("" if self.q else "   (press / to filter)"))
+        head = f" search {LABEL[self.mode]}: {self.q}"
         scr.addnstr(0, 0, head.ljust(w - 1), w - 1, curses.A_BOLD)
+        tabs = "  ".join(f"[{LABEL[m]}]" if m == self.mode else f" {LABEL[m]} " for m in MODES)
+        if len(head) + len(tabs) + 2 < w:
+            scr.addnstr(0, w - 1 - len(tabs), tabs, len(tabs), dim)
         state = (f" {self.folders[self.fi][1]} · {self.src or 'claude+codex'}"
                  f"{' · today' if self.today else ''}"
                  f"{' · ⚠ danger (no prompts)' if self.danger else ''}"
@@ -335,7 +339,8 @@ class Tui:
                     f"{self.csx.proj(e)[:16]:<16} {(e.get('branch') or '')[:12]:<12} ")
             row = (left + e["title"])[:w - 1]
             scr.addnstr(y, 0, row.ljust(w - 1), w - 1,
-                        (sel_c | curses.A_BOLD) if on else tool_c.get(tag, 0))
+                        (sel_c | curses.A_BOLD) if on
+                        else dim | curses.A_DIM if e.get("worker") else tool_c.get(tag, 0))
             y += 1
             if on and hits:
                 for role, ts, snip in hits[:2]:
@@ -344,12 +349,24 @@ class Tui:
                     scr.addnstr(y, 4, f"{role} {ts} …{snip}"[:w - 6], w - 6, dim)
                     y += 1
 
-        scr.addnstr(h - 1, 0, HELP[:w - 1].ljust(w - 1), w - 1, dim)
+        if self.menu:
+            self.draw_menu(scr, h, w)
+        scr.addnstr(h - 1, 0, (" " + FOOT)[:w - 1].ljust(w - 1), w - 1, dim)
         try:
-            curses.curs_set(1 if self.filtering else 0)
+            curses.curs_set(0 if self.menu else 1)
         except curses.error:
             pass
         scr.move(0, min(len(head), w - 1))
+
+    def draw_menu(self, scr, h, w):
+        """Options panel over the bottom of the list. Letters act here."""
+        width = min(w - 2, 46)
+        lines = [" options · esc close "] + [f"  {k}  {v}" for k, v in MENU]
+        y0 = max(1, h - 2 - len(lines))
+        for i, ln in enumerate(lines):
+            scr.addnstr(y0 + i, w - 1 - width, ln.ljust(width), width,
+                        curses.color_pair(2) | (curses.A_BOLD if i == 0 else 0)
+                        | curses.A_REVERSE)
 
     def draw_help(self, scr):
         scr.erase()
@@ -442,6 +459,8 @@ class Tui:
 
         lines = self.reader_lines(w)
         body_h = h - 2
+        if r["off"] < 0:
+            r["off"] = off = max(0, len(lines) - body_h)
         for i in range(body_h):
             if off + i >= len(lines):
                 break
@@ -461,14 +480,14 @@ class Tui:
         pct = int(100 * min(1.0, (off + body_h) / max(len(lines), 1)))
         scr.addnstr(h - 1, 0,
                     f" {pct:>3}% · ↑↓/pgup/pgdn scroll · g/G top/end · "
-                    f"m raw/md · enter resume · q back".ljust(w - 1), w - 1, dim)
+                    f"m raw/md · enter open · ← back".ljust(w - 1), w - 1, dim)
 
     # ---------- loop ----------
 
     def key_reader(self, ch):
         r = self.reader
         lines, off, page = r["lines"] or [], r["off"], max(1, self.h - 4)
-        if ch in ("q", "\x1b"):
+        if ch in ("q", ESC, curses.KEY_LEFT):
             self.reader = None
         elif ch in (curses.KEY_DOWN, "\x0e", "j"):
             r["off"] = min(max(0, len(lines) - 2), off + 1)
@@ -513,7 +532,6 @@ class Tui:
                 return
 
     def dispatch(self, ch, scr):
-
         if self.helping:
             self.helping = False
             return
@@ -521,56 +539,67 @@ class Tui:
             return self.key_reader(ch)
         if self.picker is not None:
             return self.key_picker(ch)
-        if self.filtering:
-            return self.key_filter(ch)
-        self.key_normal(ch, scr)
+        if self.menu:
+            return self.key_menu(ch)
+        self.key_list(ch, scr)
 
-    def key_filter(self, ch):
-        """'/' mode: keystrokes build the query, enter keeps it, esc drops it."""
-        if ch in ("\n", "\r", curses.KEY_ENTER):
-            self.filtering = False
-        elif ch == "\x1b":
-            self.filtering = False
+    def key_list(self, ch, scr):
+        """The main screen: typing always searches; only special keys act."""
+        r = self.rows
+        page = max(1, self.h - 6)
+        if ch in (CTRL_O, curses.KEY_F2):
+            self.menu = True
+        elif ch == ESC:
+            if not self.q:
+                raise KeyboardInterrupt
             self.q, self.mode = "", "title"
             self.refilter()
+        elif ch in ("\n", "\r", curses.KEY_ENTER):
+            if self.rows:
+                self.resume()
+            elif self.q.strip() and self.mode == "title":   # no title hit: look inside
+                self.run_search("deep", scr)
+        elif ch == TAB:
+            nxt = MODES[(MODES.index(self.mode) + 1) % len(MODES)]
+            if nxt == "title":
+                self.mode = "title"
+                self.refilter()
+            else:
+                self.run_search(nxt, scr)
+        elif ch == curses.KEY_RIGHT:
+            self.open_reader()
+        elif ch in (curses.KEY_DOWN, "\x0e"):
+            self.sel = min(len(r) - 1, self.sel + 1)
+        elif ch in (curses.KEY_UP, "\x10"):
+            self.sel = max(0, self.sel - 1)
+        elif ch == curses.KEY_NPAGE:
+            self.sel = min(len(r) - 1, self.sel + page)
+        elif ch == curses.KEY_PPAGE:
+            self.sel = max(0, self.sel - page)
         elif ch in ("\x7f", "\b", curses.KEY_BACKSPACE):
             self.q = self.q[:-1]
             self.mode = "title"
             self.refilter()
-        elif ch in (curses.KEY_DOWN, curses.KEY_UP):
-            self.sel = max(0, self.sel + (1 if ch == curses.KEY_DOWN else -1))
         elif isinstance(ch, str) and ch.isprintable():
             self.q += ch
             self.mode = "title"
             self.refilter()
 
-    def key_normal(self, ch, scr):
-        r = self.rows
-        page = max(1, self.h - 6)
-        if ch in ("q", "\x1b"):
-            raise KeyboardInterrupt
-        elif ch == "/":
-            self.filtering = True
-        elif ch == "?":
-            self.helping = True
-        elif ch in ("j", curses.KEY_DOWN):
-            self.sel = min(len(r) - 1, self.sel + 1)
-        elif ch in ("k", curses.KEY_UP):
-            self.sel = max(0, self.sel - 1)
-        elif ch in (" ", curses.KEY_NPAGE):
-            self.sel = min(len(r) - 1, self.sel + page)
-        elif ch == curses.KEY_PPAGE:
-            self.sel = max(0, self.sel - page)
-        elif ch == "g":
-            self.sel = 0
-        elif ch == "G":
-            self.sel = max(0, len(r) - 1)
-        elif ch in ("\n", "\r", curses.KEY_ENTER):
-            self.resume()
+    def key_menu(self, ch):
+        """One letter, one action, then the menu closes."""
+        self.menu = False
+        if ch == "f":
+            self.picker = {"q": "", "sel": self.fi}
+        elif ch == "t":
+            self.today = not self.today
+            self.mode = "title"
+            self.refilter()
+        elif ch == "s":
+            self.src = {"": "claude", "claude": "codex", "codex": ""}[self.src]
+            self.mode = "title"
+            self.refilter()
         elif ch == "b":
             self.resume(fork=True)
-        elif ch == "r":
-            self.open_reader()
         elif ch == "y":
             self.copy_cmd()
         elif ch == "Y":
@@ -582,22 +611,14 @@ class Tui:
             self.danger = not self.danger
             self.note = ("danger on — resume and copy skip permission prompts"
                          if self.danger else "danger off")
-        elif ch == "d":
-            self.run_search("deep", scr)
-        elif ch == "a":
-            self.run_search("global", scr)
-        elif ch == "p":
-            self.run_search("prompts", scr)
-        elif ch == "t":
-            self.today = not self.today
-            self.mode = "title"
+        elif ch == "w":
+            self.workers = not self.workers
             self.refilter()
-        elif ch == "f":
-            self.picker = {"q": "", "sel": self.fi}
-        elif ch == "s":
-            self.src = {"": "claude", "claude": "codex", "codex": ""}[self.src]
-            self.mode = "title"
-            self.refilter()
+            self.note = "workers shown" if self.workers else "workers hidden (a search still finds them)"
+        elif ch == "?":
+            self.helping = True
+        elif ch == "q":
+            raise KeyboardInterrupt
 
     def copy_cmd(self):
         e = self.current()
@@ -610,6 +631,7 @@ class Tui:
 
 
 def run(csx):
+    os.environ.setdefault("ESCDELAY", "25")
     if not sys.stdout.isatty():
         sys.exit("csx tui needs a terminal")
     tui = Tui(csx, csx.load(quiet=True))

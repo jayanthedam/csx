@@ -7,7 +7,8 @@ read it back, and get the exact command to resume it.
 Two files, no dependencies, no build step, no network calls.
 
 ```
-csx                        every session, newest first, in a pager
+csx                        full-screen terminal UI (`csx tui` also works)
+csx -a                     every session, newest first, in a pager
 csx auth profile           search titles
 csx -d base_row_id         search message bodies
 csx -g base_row_id         search everything (+ tool calls + subagent runs)
@@ -77,39 +78,38 @@ csx -i ~/ABL -d OOM       # scoping also makes search faster — less to read
 A bare `csx some words` searches titles; if nothing matches it falls back to a
 body search automatically, so you rarely have to pick a flag.
 
-## TUI — `csx tui`
+## TUI — `csx` (or `csx tui`)
 
 The same thing without leaving the terminal, and the reason to prefer it:
 **Enter doesn't copy a command or spawn a window — the process `exec`s into the
 session.** You are just in it.
 
 ```
- title> agent tables
- ~/ABL (21) · claude+codex · 12 shown
+ search titles: agent tables          [titles]   messages    everything    my prompts
+ ~/ABL · claude+codex · 12 shown
    TOOL    WHEN            MSGS FOLDER           TITLE
  ▸ claude  jul 27 12:27pm    50 ABL              AGENT TABLES
-   claude  jul 27 12:25pm  1439 ABL              Map agent tables setup across dev and QA
- enter resume · ^r read · ^d deep · ^g global · ^p prompts · ^y today · ^f folder …
+ type to search · ↑↓ pick · enter open · → read · tab look inside · ^o options · esc clear/quit
 ```
 
-`/` starts a filter (enter applies, esc clears). Everything else is a plain
-letter — no Ctrl combos, because terminals and layouts swallow some of them
-(`^x` never arrived under Ghostty) and `^C`/`^Z`/`^S` are already spoken for:
+Sessions an agent started headless (`claude -p`, `codex exec`) and nobody
+opened are hidden from the plain list. Typing a search still finds them, dimmed.
+
+One mode, like `fzf`: letters always type into the search. Type a few words of
+the title, press Enter, you are back in the session.
 
 | | |
 |---|---|
-| `j` `k` `g` `G` `space` | move, top, bottom, page |
-| `enter` | resume — this process becomes the session |
-| `b` | branch it instead (`--fork-session`) |
-| `y` / `Y` | copy the resume command / the session id |
-| `x` | danger: resume and copy skip permission prompts |
-| `r` | read the transcript (markdown; `m` for raw source) |
-| `d` / `a` / `p` | search bodies / everything / your prompt log |
-| `t` / `s` / `f` | today · claude-codex-both · folder picker |
-| `?` / `q` | keys · quit |
+| type | search titles, live |
+| `tab` | look inside: messages → + tool calls & subagents → your prompt log → titles |
+| `↑` `↓` (`^n` `^p`), `pgup` `pgdn` | pick |
+| `enter` | open — this process becomes the session. No title match? Enter searches messages. |
+| `→` | read the transcript (`←` or `esc` back, `m` raw markdown) |
+| `esc` | clear the search; on an empty search, quit |
+| `^o` or `F2` | options: `f` folder · `t` today · `s` claude/codex/both · `b` fork · `y`/`Y` copy command/id · `x` danger · `w` show workers · `?` keys · `q` quit |
 
-`f` opens a folder picker — every folder with a session count, type to filter,
-enter to scope. `r` opens a built-in reader that renders the markdown —
+`^o f` opens a folder picker — every folder with a session count, type to filter,
+enter to scope. `→` opens a built-in reader that renders the markdown —
 headings, bullets, blockquotes, fenced code as `┌─ bash │ …`, inline styles —
 word-wrapped to your terminal. Stdlib `curses`, no dependencies.
 

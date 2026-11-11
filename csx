@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """csx — browse & search Claude Code + Codex sessions.
 
-  csx                      all sessions, newest first, in a pager
+  csx                      full-screen TUI (same as `csx tui`)
+  csx -a                   all sessions, newest first, in a pager
   csx auth profile         title search
   csx -g base_row_id       global search: titles + bodies + tool calls + subagents
   csx show <id|prefix>     print a transcript
@@ -24,7 +25,7 @@ CODEX_ROOTS = [os.path.expanduser("~/.codex/sessions"),
                os.path.expanduser("~/.codex/archived_sessions")]
 HISTORY = os.path.expanduser("~/.claude/history.jsonl")
 CACHE = os.path.expanduser("~/.claude/.csx-index.json")
-CACHE_V = 8
+CACHE_V = 9
 
 C = {"dim": "\033[2m", "b": "\033[1m", "r": "\033[0m",
      "y": "\033[33m", "c": "\033[36m", "g": "\033[32m", "m": "\033[35m"}
@@ -179,10 +180,14 @@ def profile(path, src):
     """One read per file: message count, first/last timestamp, cwd, id, title."""
     n = 0
     first = last = cwd = sid = named = renamed = first_msg = branch = ""
+    # worker = started headless (claude -p / codex exec) and never opened by a
+    # person. Claude stamps every turn with its entrypoint: "cli" is a typed
+    # session (remote-control ones too), "sdk-cli" is -p. Codex says it once.
+    headless = typed = False
     try:
         fh = open(path, encoding="utf-8", errors="ignore")
     except OSError:
-        return 0, "", "", "", "", "", ""
+        return 0, "", "", "", "", "", "", False
     with fh:
         for line in fh:
             try:
@@ -195,7 +200,14 @@ def profile(path, src):
             if not cwd:
                 cwd = d.get("cwd") or (d.get("payload", {}) or {}).get("cwd", "") \
                     if isinstance(d.get("payload"), dict) or d.get("cwd") else ""
+            ep = d.get("entrypoint")
+            if ep == "sdk-cli":
+                headless = True
+            elif ep:
+                typed = True
             if src == "codex":
+                if t == "session_meta" and isinstance(d.get("payload"), dict):
+                    headless = d["payload"].get("source") == "exec"
                 if not sid and isinstance(d.get("payload"), dict):
                     sid = d["payload"].get("session_id", "") or sid
                 role, ts, text = None, d.get("timestamp", ""), None
@@ -227,7 +239,8 @@ def profile(path, src):
                     last = ts
                 if role == "user" and not first_msg and not is_noise(text):
                     first_msg = " ".join(text.split())[:160]
-    return n, first, last, cwd, sid, (renamed or named or first_msg), branch
+    return (n, first, last, cwd, sid, (renamed or named or first_msg), branch,
+            headless and not typed)
 
 
 # ---------- parallelism ----------
@@ -323,7 +336,7 @@ def scan(quiet=False):
         profiles = {t[4]: profile(t[4], t[0]) for t in todo}
 
     for src, sub, dirpath, fn, p, st in todo:
-        n, first, last, cwd, sid, title, branch = profiles[p]
+        n, first, last, cwd, sid, title, branch, worker = profiles[p]
         if src == "codex":
             m = re.search(r"([0-9a-f]{8}-[0-9a-f-]{27,})", fn)
             ident = sid or (m.group(1) if m else fn[:-6])
@@ -339,7 +352,7 @@ def scan(quiet=False):
                   "branch": branch,
                   "project": project, "cwd": cwd, "mtime": st.st_mtime,
                   "size": st.st_size, "turns": n, "start": first, "end": last,
-                  "title": title})
+                  "title": title, "worker": worker})
         out.append(e)
 
     out.sort(key=lambda e: -e["mtime"])
@@ -772,7 +785,8 @@ def main():
     ap = argparse.ArgumentParser(
         prog="csx", description="browse & search Claude Code + Codex sessions",
         epilog="examples:\n"
-               "  csx                       every session, newest first, scrollable\n"
+               "  csx                       full-screen terminal UI (same as `csx tui`)\n"
+               "  csx -a                    every session, newest first, in a pager\n"
                "  csx auth profile          title search (AND of terms)\n"
                "  csx -d base_row_id        deep search message bodies\n"
                "  csx -g base_row_id        global: + tool calls + subagent runs\n"
@@ -833,7 +847,9 @@ def main():
         PAGER_ON = False
     FULL_IDS[0] = a.full
 
-    if a.terms and a.terms[0] in ("tui", "t"):
+    # bare `csx` in a real terminal opens the TUI; any flag or pipe keeps the list
+    bare = len(sys.argv) == 1 and sys.stdin.isatty() and sys.stdout.isatty()
+    if bare or (a.terms and a.terms[0] in ("tui", "t")):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import csx_tui
         return csx_tui.run(sys.modules[__name__])
